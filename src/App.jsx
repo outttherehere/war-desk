@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNews } from "./useNews";
+import LiveTV from "./LiveTV";
+import WorldMap from "./WorldMap";
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Teko:wght@300;400;500;600;700&display=swap');
@@ -587,66 +589,8 @@ function PageDashboard({ news, loading, error, refetch }) {
   );
 }
 
-// ─── PAGE: LIVE NEWS TV ──────────────────────────────────────
-function PageLiveTV() {
-  const [active, setActive] = useState(0);
-  return (
-    <div style={{padding:8}}>
-      <div className="panel" style={{marginBottom:8}}>
-        <div className="ph"><span className="ph-icon">📺</span> LIVE NEWS CHANNELS — INDIA</div>
-        <div style={{padding:"8px 12px",display:"flex",gap:8,flexWrap:"wrap",borderBottom:"1px solid var(--b)"}}>
-          {YOUTUBE_CHANNELS.map((ch,i)=>(
-            <button key={i} onClick={()=>setActive(i)} style={{
-              padding:"5px 12px", background:active===i?"rgba(0,212,255,.15)":"var(--card)",
-              border:`1px solid ${active===i?"var(--cyan)":"var(--b)"}`,
-              color:active===i?"var(--cyan)":"var(--t2)", cursor:"pointer", borderRadius:1,
-              fontFamily:"Teko", fontSize:13, letterSpacing:1
-            }}>
-              {ch.name}
-            </button>
-          ))}
-        </div>
-        {/* Main player */}
-        <div style={{position:"relative",width:"100%",paddingTop:"45%",background:"#000"}}>
-          <iframe
-            key={active}
-            src={`https://www.youtube.com/embed/${YOUTUBE_CHANNELS[active].videoId}?autoplay=1&mute=0`}
-            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
-        <div style={{padding:"8px 12px",display:"flex",alignItems:"center",gap:12,borderTop:"1px solid var(--b)"}}>
-          <div className="live-dot"/>
-          <span className="teko" style={{fontSize:16,letterSpacing:2,color:"var(--txt)"}}>{YOUTUBE_CHANNELS[active].name}</span>
-          <span style={{fontSize:11,color:"var(--t3)"}}>{YOUTUBE_CHANNELS[active].desc}</span>
-          <CredLabel score={YOUTUBE_CHANNELS[active].credibility}/>
-        </div>
-      </div>
-      {/* All channels grid */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:8}}>
-        {YOUTUBE_CHANNELS.map((ch,i)=>(
-          <div key={i} className="panel" style={{cursor:"pointer",border:active===i?"1px solid var(--cyan)":"1px solid var(--b)"}} onClick={()=>setActive(i)}>
-            <div style={{position:"relative",paddingTop:"56.25%",background:"#000"}}>
-              <iframe
-                src={`https://www.youtube.com/embed/${ch.videoId}?mute=1`}
-                style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
-              />
-            </div>
-            <div style={{padding:"8px 10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <div>
-                <div className="teko" style={{fontSize:14,letterSpacing:1,color:"var(--txt)"}}>{ch.name}</div>
-                <div style={{fontSize:10,color:"var(--t3)"}}>{ch.desc}</div>
-              </div>
-              <CredLabel score={ch.credibility}/>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ─── PAGE: LIVE NEWS TV — using dedicated component ──────────
+function PageLiveTV() { return <LiveTV />; }
 
 // ─── PAGE: RESOURCES ─────────────────────────────────────────
 function PageResources() {
@@ -760,78 +704,8 @@ function PageGeoNews() {
   );
 }
 
-// ─── PAGE: WORLD MAP ─────────────────────────────────────────
-function PageWorldMap() {
-  return (
-    <div style={{padding:8,display:"flex",flexDirection:"column",gap:8}}>
-      <div className="panel">
-        <div className="ph"><span className="ph-icon">🌍</span> GLOBAL CONFLICT RISK INDEX — ALL COUNTRIES</div>
-        <div style={{overflowX:"auto"}}>
-          <table className="world-table" style={{width:"100%"}}>
-            <thead>
-              <tr>
-                <th>COUNTRY</th>
-                <th>RISK LEVEL</th>
-                <th>RISK %</th>
-                <th>STATUS</th>
-                <th>TREND</th>
-                <th>INDIA IMPACT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {WORLD_RISKS.sort((a,b)=>b.risk-a.risk).map((w,i)=>{
-                const c=w.risk>=80?"#ff2d2d":w.risk>=60?"#ff6b00":w.risk>=40?"#ffe033":"#00ff88";
-                const impact=w.risk>=80?"HIGH":w.risk>=60?"MEDIUM":w.risk>=40?"LOW":"MINIMAL";
-                const ic=w.risk>=80?"#ff6b00":w.risk>=60?"#ffe033":"#00ff88";
-                return (
-                  <tr key={i}>
-                    <td style={{color:"#c8dde6",fontWeight:600,fontSize:13}}>{w.country}</td>
-                    <td>
-                      <div className="prob-bar" style={{width:120,height:5,display:"inline-block",verticalAlign:"middle",marginRight:8}}>
-                        <div className="prob-fill" style={{width:`${w.risk}%`,background:c}}/>
-                      </div>
-                    </td>
-                    <td className="teko" style={{fontSize:18,color:c}}>{w.risk}%</td>
-                    <td><span style={{fontSize:9,color:c,border:`1px solid ${c}44`,padding:"1px 6px",fontFamily:"Teko",letterSpacing:1}}>{w.status}</span></td>
-                    <td className="teko" style={{fontSize:18,color:w.trend==="↑"?"#ff2d2d":w.trend==="↓"?"#00ff88":"#ffe033"}}>{w.trend}</td>
-                    <td><span style={{fontSize:9,color:ic,fontFamily:"Teko",letterSpacing:1}}>{impact}</span></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* World SVG map */}
-      <div className="panel">
-        <div className="ph"><span className="ph-icon">◎</span> WORLD CONFLICT HEATMAP</div>
-        <div style={{padding:12}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:6}}>
-            {WORLD_RISKS.sort((a,b)=>b.risk-a.risk).map((w,i)=>{
-              const c=w.risk>=80?"#ff2d2d":w.risk>=60?"#ff6b00":w.risk>=40?"#ffe033":"#00ff88";
-              return (
-                <div key={i} style={{background:`${c}11`,border:`1px solid ${c}33`,padding:"8px 10px",borderRadius:2}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                    <span style={{fontSize:13,fontWeight:600,color:"#c8dde6"}}>{w.country}</span>
-                    <span className="teko" style={{fontSize:18,color:c,fontWeight:700}}>{w.risk}%</span>
-                  </div>
-                  <div className="prob-bar">
-                    <div className="prob-fill" style={{width:`${w.risk}%`,background:c}}/>
-                  </div>
-                  <div style={{fontSize:9,color:"#3a6678",fontFamily:"Share Tech Mono",marginTop:4}}>{w.status}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div style={{padding:"6px 12px",fontSize:9,color:"#1a5068",fontFamily:"Share Tech Mono",borderTop:"1px solid var(--b)"}}>
-          DATA: ACLED · GDELT · Uppsala Conflict Data Program · Updated hourly
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── PAGE: WORLD MAP — using dedicated Leaflet component ─────
+function PageWorldMap() { return <WorldMap />; }
 
 // ─── MAIN APP ────────────────────────────────────────────────
 export default function App() {
