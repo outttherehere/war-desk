@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useNews } from "./useNews";
-import TVPanel from "./TVPanel";
 import SindoorPanel from "./SindoorPanel";
 import OSINTPanel from "./OSINTPanel";
 import LiveMap from "./LiveMap";
+import SindoorMap from "./SindoorMap";
+import HumanCostPanel from "./HumanCostPanel";
 import { useGDELT } from "./useGDELT";
 
 const CSS = `
@@ -514,9 +515,8 @@ function DashMap() {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────
-function PageDashboard({ news, loading, refetch }) {
+function PageDashboard({ news, loading, refetch, sindoorSignal, liveRiskIndex }) {
   const [tab, setTab] = useState("news");
-  const { sindoorSignal, liveCount, lastFetch } = useGDELT();
 
   return (
     <div className="dash-grid">
@@ -525,7 +525,7 @@ function PageDashboard({ news, loading, refetch }) {
         <div className="panel">
           <div className="ph"><span className="ph-icon">◈</span> CONFLICT RISK</div>
           <div style={{ padding:"10px 12px" }}>
-            <RiskGauge value={67}/>
+            <RiskGauge value={liveRiskIndex || 67}/>
             <div style={{ textAlign:"center", marginBottom:10 }}><span className="tbadge tb-high">⚡ ELEVATED</span></div>
             {BORDER_PROBS.map(p=>(
               <div key={p.label} className="prob-wrap">
@@ -616,9 +616,9 @@ function PageDashboard({ news, loading, refetch }) {
         </div>
       </div>
 
-      {/* COL 4 — TV + Conflicts + Sources */}
+      {/* COL 4 — Human Cost + Conflicts + Sources */}
       <div className="col">
-        <TVPanel/>
+        <HumanCostPanel/>
         <div className="panel" style={{ flex:1 }}>
           <div className="ph"><span className="ph-icon">◈</span> ACTIVE CONFLICTS</div>
           <div className="scroll" style={{ maxHeight:300 }}>
@@ -761,8 +761,13 @@ function PageWorldMap() {
 }
 
 // ─── SINDOOR PAGE ─────────────────────────────────────────────
-function PageSindoor() {
-  return <div className="page-pad"><SindoorPanel/></div>;
+function PageSindoor({ sindoorSignal }) {
+  return (
+    <div className="page-pad" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+      <SindoorMap/>
+      <SindoorPanel sindoorSignal={sindoorSignal}/>
+    </div>
+  );
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────
@@ -770,6 +775,25 @@ export default function App() {
   const [time, setTime] = useState(new Date());
   const [page, setPage] = useState("dashboard");
   const { news, loading, refetch } = useNews();
+  const { sindoorSignal, liveRiskIndex, gdeltEvents, lastFetch } = useGDELT();
+
+  // Live ticker from news API — falls back to static if not loaded
+  const [tickerItems, setTickerItems] = useState(TICKER_ITEMS);
+  useEffect(() => {
+    async function fetchTicker() {
+      try {
+        const r = await fetch("/api/news");
+        const d = await r.json();
+        if (d.ok && d.items?.length > 0) {
+          const live = d.items.slice(0, 8).map(i => `${i.source.toUpperCase()}: ${i.headline}`);
+          setTickerItems(live);
+        }
+      } catch { /* keep static */ }
+    }
+    fetchTicker();
+    const t = setInterval(fetchTicker, 10 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const t = setInterval(()=>setTime(new Date()),1000);
@@ -785,6 +809,7 @@ export default function App() {
     ["geonews",  "🗞️ Geo News"],
     ["resources","🛢️ Resources"],
     ["worldmap", "🌍 World Map"],
+    ["humanost", "🕊️ Human Cost"],
   ];
 
   return (
@@ -800,6 +825,15 @@ export default function App() {
           </div>
         </div>
         <div style={{ marginLeft:"auto", display:"flex", gap:12, alignItems:"center" }}>
+          {/* Live GDELT indicator */}
+          {lastFetch && (
+            <div style={{ display:"flex", alignItems:"center", gap:5, padding:"2px 8px", border:"1px solid #00d4ff22", background:"rgba(0,212,255,.05)" }}>
+              <div style={{ width:5,height:5,borderRadius:"50%",background:"#00d4ff",boxShadow:"0 0 5px #00d4ff" }}/>
+              <span className="mono" style={{ fontSize:9, color:"#00d4ff", letterSpacing:1 }}>
+                GDELT {lastFetch.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:false})}
+              </span>
+            </div>
+          )}
           <button onClick={refetch} style={{ background:"rgba(0,212,255,.08)", border:"1px solid rgba(0,212,255,.2)", color:"var(--cyan)", fontFamily:"Teko", fontSize:12, letterSpacing:2, padding:"4px 12px", cursor:"pointer", borderRadius:1 }}>↺ REFRESH</button>
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <div className="live-dot"/>
@@ -817,11 +851,12 @@ export default function App() {
           <button key={id} className={`nav-tab${page===id?" active":""}`} onClick={()=>setPage(id)}>{label}</button>
         ))}
       </div>
-      {page==="dashboard" && <PageDashboard news={news} loading={loading} refetch={refetch}/>}
-      {page==="sindoor"   && <PageSindoor/>}
+      {page==="dashboard" && <PageDashboard news={news} loading={loading} refetch={refetch} sindoorSignal={sindoorSignal} liveRiskIndex={liveRiskIndex}/>}
+      {page==="sindoor"   && <PageSindoor sindoorSignal={sindoorSignal}/>}
       {page==="geonews"   && <PageGeoNews/>}
       {page==="resources" && <PageResources/>}
       {page==="worldmap"  && <PageWorldMap/>}
+      {page==="humanost"  && <div className="page-pad"><HumanCostPanel/></div>}
       <div className="bottom-bar">
         <div className="break-label">
           <div className="live-dot"/>
@@ -829,7 +864,7 @@ export default function App() {
         </div>
         <div className="ticker-wrap">
           <div className="ticker-track">
-            {[...TICKER_ITEMS,...TICKER_ITEMS].map((item,i)=>(
+            {[...tickerItems,...tickerItems].map((item,i)=>(
               <span key={i} className="ticker-item">{item}<span style={{ color:"#f0a500", margin:"0 10px" }}>///</span></span>
             ))}
           </div>
