@@ -3,6 +3,8 @@ import { useNews } from "./useNews";
 import TVPanel from "./TVPanel";
 import SindoorPanel from "./SindoorPanel";
 import OSINTPanel from "./OSINTPanel";
+import LiveMap from "./LiveMap";
+import { useGDELT } from "./useGDELT";
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Teko:wght@300;400;500;600;700&display=swap');
@@ -514,6 +516,7 @@ function DashMap() {
 // ─── DASHBOARD ────────────────────────────────────────────────
 function PageDashboard({ news, loading, refetch }) {
   const [tab, setTab] = useState("news");
+  const { sindoorSignal, liveCount, lastFetch } = useGDELT();
 
   return (
     <div className="dash-grid">
@@ -557,17 +560,10 @@ function PageDashboard({ news, loading, refetch }) {
       {/* COL 2 — Live World Map + Op Sindoor */}
       <div className="col">
         <div className="panel">
-          <div className="ph">
-            <span className="ph-icon">🌍</span> LIVE GEOPOLITICAL MAP
-            <span style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6 }}>
-              <div className="live-dot" style={{ width:6, height:6 }}/>
-              <span className="mono" style={{ fontSize:10, color:"#3a6678" }}>{MAP_EVENTS.length} EVENTS · CLICK MARKERS</span>
-            </span>
-          </div>
-          <DashMap/>
+          <LiveMap height={380} showEventList={true}/>
         </div>
-        {/* OP SINDOOR — full panel */}
-        <SindoorPanel/>
+        {/* OP SINDOOR — auto-updates from GDELT */}
+        <SindoorPanel sindoorSignal={sindoorSignal}/>
       </div>
 
       {/* COL 3 — OSINT Feed + News/Intel */}
@@ -737,76 +733,19 @@ function PageResources() {
 
 // ─── WORLD MAP PAGE ───────────────────────────────────────────
 function PageWorldMap() {
-  const mapRef = useRef(null);
-  const leafRef = useRef(null);
-  const [sel, setSel] = useState(null);
-
-  useEffect(() => {
-    let mounted = true;
-    async function init() {
-      const L = await loadLeaflet();
-      if (!mounted || !mapRef.current || leafRef.current) return;
-      const map = L.map(mapRef.current, { center:[20,60], zoom:3 });
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution:"© OpenStreetMap", maxZoom:10 }).addTo(map);
-      leafRef.current = map;
-      [[[19,72.8],[24,58],[26.5,55]],[[13,80.3],[6,93],[1.3,103.8]],[[15,54],[12.5,44],[29,32.5]]].forEach(pts=>
-        L.polyline(pts,{color:"#00d4ff",weight:1.3,opacity:.3,dashArray:"5,8"}).addTo(map));
-      MAP_EVENTS.forEach(ev=>{
-        const c=SEV_COLOR[ev.sev]||"#7aacbe";
-        const sz=ev.sev==="critical"?15:ev.sev==="high"?10:7;
-        const icon=L.divIcon({className:"",html:`<div style="position:relative;width:${sz*3}px;height:${sz*3}px"><div style="position:absolute;top:50%;left:50%;width:${sz*2}px;height:${sz*2}px;border-radius:50%;border:2px solid ${c};transform:translate(-50%,-50%);animation:ping 2s ease-out infinite;opacity:0"></div><div style="position:absolute;top:50%;left:50%;width:${sz}px;height:${sz}px;border-radius:50%;background:${c};transform:translate(-50%,-50%);box-shadow:0 0 ${sz}px ${c};animation:${ev.sev==="critical"?"pcrit":"phigh"} 2s infinite"></div><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-160%);font-size:${sz}px">${ev.type}</div></div>`,iconSize:[sz*3,sz*3],iconAnchor:[sz*1.5,sz*1.5]});
-        L.marker([ev.lat,ev.lng],{icon}).bindPopup(`<div><b style="font-family:Teko;font-size:16px;color:#e8f4f8">${ev.type} ${ev.title}</b><br/><span style="font-size:12px;color:#7aacbe">${ev.detail}</span><br/><span style="font-size:10px;color:#3a6678;font-family:Share Tech Mono">🇮🇳 ${ev.india}</span></div>`,{maxWidth:280}).addTo(map)
-          .on("click",()=>setSel(ev));
-      });
-    }
-    init();
-    return()=>{ mounted=false; if(leafRef.current){leafRef.current.remove();leafRef.current=null;} };
-  }, []);
-
   return (
     <div style={{ padding:8, display:"grid", gridTemplateColumns:"1fr 290px", gap:8, minHeight:"calc(100vh - 130px)" }}>
-      <div className="panel" style={{ display:"flex", flexDirection:"column" }}>
-        <div className="ph"><span className="ph-icon">🌍</span> LIVE WORLD CONFLICT MAP — {MAP_EVENTS.length} EVENTS</div>
-        <div ref={mapRef} style={{ flex:1, minHeight:520 }}/>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        <LiveMap height={560} showEventList={true}/>
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-        {sel&&(
-          <div className="panel" style={{ animation:"fadeIn .3s ease" }}>
-            <div className="ph"><span style={{ color:SEV_COLOR[sel.sev] }}>{sel.type}</span> EVENT DETAIL</div>
-            <div style={{ padding:"10px 14px" }}>
-              <div className="teko" style={{ fontSize:18, color:"#e8f4f8", marginBottom:5 }}>{sel.title}</div>
-              <div style={{ fontSize:12, color:"#7aacbe", lineHeight:1.5, marginBottom:8 }}>{sel.detail}</div>
-              <div className="mono" style={{ fontSize:11, color:"#3a6678" }}>🇮🇳 {sel.india}</div>
-              <div className="mono" style={{ fontSize:11, color:"#3a6678" }}>{sel.country} · {sel.updated}</div>
-              <button onClick={()=>leafRef.current&&leafRef.current.flyTo([sel.lat,sel.lng],5,{duration:1.5})}
-                style={{ marginTop:10, padding:"5px 14px", background:"rgba(0,212,255,.08)", border:"1px solid rgba(0,212,255,.2)", color:"var(--cyan)", fontFamily:"Teko", fontSize:12, letterSpacing:1, cursor:"pointer", borderRadius:1 }}>
-                🎯 FLY TO ON MAP
-              </button>
-            </div>
-          </div>
-        )}
-        <div className="panel" style={{ flex:1 }}>
-          <div className="ph"><span className="ph-icon">◈</span> ALL EVENTS</div>
-          <div className="scroll" style={{ maxHeight:"calc(100vh - 280px)" }}>
-            {[...MAP_EVENTS].sort((a,b)=>Object.keys(SEV_COLOR).indexOf(a.sev)-Object.keys(SEV_COLOR).indexOf(b.sev)).map(ev=>(
-              <div key={ev.id} className="conf-row" style={{ borderLeft:`3px solid ${SEV_COLOR[ev.sev]}` }}
-                onClick={()=>{ setSel(ev); if(leafRef.current)leafRef.current.flyTo([ev.lat,ev.lng],5,{duration:1.5}); }}>
-                <div>
-                  <div style={{ fontSize:13, fontWeight:600, color:"#c8dde6" }}>{ev.type} {ev.title}</div>
-                  <div style={{ fontSize:11, color:"#3a6678" }}>{ev.country} · {ev.updated}</div>
-                  <div style={{ fontSize:11, color:"#7aacbe" }}>🇮🇳 {ev.india}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
         <div className="panel">
           <div className="ph"><span className="ph-icon">🌍</span> COUNTRY RISK INDEX</div>
-          <div className="scroll" style={{ maxHeight:260 }}>
+          <div className="scroll" style={{ maxHeight:"calc(100vh - 180px)" }}>
             {WORLD_RISKS.sort((a,b)=>b.risk-a.risk).map((w,i)=>{
               const c=w.risk>=80?"#ff2d2d":w.risk>=60?"#ff6b00":w.risk>=40?"#ffe033":"#00ff88";
               return (
-                <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 12px", borderBottom:"1px solid var(--b)" }}>
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 12px", borderBottom:"1px solid var(--b)" }}>
                   <div style={{ fontSize:13, color:"#c8dde6", flex:1 }}>{w.country}</div>
                   <div className="prob-bar" style={{ width:65, height:5 }}><div className="prob-fill" style={{ width:`${w.risk}%`, background:c }}/></div>
                   <div className="teko" style={{ fontSize:16, color:c, width:40 }}>{w.risk}%</div>
