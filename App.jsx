@@ -136,7 +136,9 @@ const CSS = `
   /* RESOURCE CARD */
   .res-card { background:var(--card); border:1px solid var(--b); padding:12px; border-radius:2px; position:relative; overflow:hidden; }
   .res-card::after { content:''; position:absolute; bottom:0; left:0; height:2px; background:var(--fill-color,var(--cyan)); transition:width 1s ease; }
-  .res-num  { font-family:'Teko',sans-serif; font-size:36px; font-weight:700; line-height:1; }
+  .res-num  .res-bar  { height:6px;background:var(--b);border-radius:2px;overflow:hidden;margin:6px 0 4px; }
+  .res-fill { height:100%;border-radius:2px;transition:width 1.2s ease; }
+```{ font-family:'Teko',sans-serif; font-size:36px; font-weight:700; line-height:1; }
   .res-unit { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--t3); margin-top:2px; }
   .res-bar  { height:6px; background:var(--b); border-radius:3px; overflow:hidden; margin:8px 0 4px; }
   .res-fill { height:100%; border-radius:3px; transition:width 1.2s ease; }
