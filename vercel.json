@@ -1,1 +1,1 @@
-{ "buildCommand": "npm run build", "outputDirectory": "dist", "rewrites": [ { "source": "/api/(.*)", "destination": "/api/$1" }, { "source": "/((?!api).*)", "destination": "/index.html" } ] } 
+{ "buildCommand": "npm run build", "outputDirectory": "dist", "functions": { "api/gdelt.js": {}, "api/news.js": {} }, "rewrites": [ { "source": "/api/(.*)", "destination": "/api/$1" }, { "source": "/((?!api).*)", "destination": "/index.html" } ] } 
