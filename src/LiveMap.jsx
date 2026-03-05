@@ -1,343 +1,249 @@
-// src/LiveMap.jsx
-// Renders Leaflet map with:
-//   - Static baseline conflict markers (always visible)
-//   - Live GDELT events (new articles plotted as they arrive)
-//   - Different visual treatment for live vs static markers
-//   - Auto-refreshes markers when GDELT data updates
+// LiveMap.jsx — Geopolitical map with GDELT events, aircraft layer, share
+import { useEffect, useRef, useState } from 'react';
 
-import { useEffect, useRef, useState } from "react";
-import { useGDELT } from "./useGDELT";
+const SEVERITY_COLOR = { CRITICAL: '#ff2d2d', HIGH: '#ff8c00', MEDIUM: '#ffd700', LOW: '#00ff88' };
+const SEVERITY_RADIUS = { CRITICAL: 14, HIGH: 11, MEDIUM: 8, LOW: 6 };
 
-const SEV_COLOR = {
-  critical: "#ff2d2d",
-  high:     "#ff6b00",
-  medium:   "#ffe033",
-  low:      "#00d4ff",
-};
+// High-value Indian assets to always show
+const INDIA_ASSETS = [
+  { id: 'ins-vikrant', lat: 15.3, lng: 73.8, type: 'NAVAL', label: 'INS Vikrant — W Coast patrol', icon: '⚓' },
+  { id: 'inaf-sulur', lat: 11.0, lng: 77.1, type: 'AIRBASE', label: 'INAF Sulur — SU-30 base', icon: '✈' },
+  { id: 'inaf-pathankot', lat: 32.2, lng: 75.6, type: 'AIRBASE', label: 'Pathankot AB — forward base', icon: '✈' },
+  { id: 'ins-karwar', lat: 14.8, lng: 74.1, type: 'NAVAL', label: 'INS Kadamba — naval base', icon: '⚓' },
+  { id: 'siachen', lat: 35.4, lng: 77.1, type: 'ARMY', label: 'Siachen Glacier — highest battlefield', icon: '🏔' },
+  { id: 'andaman', lat: 11.7, lng: 92.7, type: 'NAVAL', label: 'Andaman — strategic monitoring', icon: '⚓' },
+  { id: 'depsang', lat: 34.8, lng: 78.0, type: 'ARMY', label: 'Depsang Plains — LAC friction', icon: '⚠' },
+  { id: 'galwan', lat: 34.7, lng: 73.6, type: 'ARMY', label: 'Galwan Valley — 2020 clash site', icon: '⚠' },
+];
 
-function loadLeaflet() {
-  return new Promise(resolve => {
-    if (window.L) { resolve(window.L); return; }
-    const css = document.createElement("link");
-    css.rel = "stylesheet";
-    css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
-    document.head.appendChild(css);
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-    s.onload = () => resolve(window.L);
-    document.head.appendChild(s);
-  });
-}
+export default function LiveMap({ events = [], onHotspotClick, sindoorMode = false }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [showAssets, setShowAssets] = useState(true);
+  const [filter, setFilter] = useState('ALL');
+  const [liveCount, setLiveCount] = useState(0);
 
-function makeMarkerHtml(event, isSmall = false) {
-  const c   = SEV_COLOR[event.severity] || "#7aacbe";
-  const sz  = event.severity === "critical" ? (isSmall ? 10 : 14)
-            : event.severity === "high"     ? (isSmall ?  8 : 10)
-            : (isSmall ? 6 : 7);
-
-  if (event.isLive) {
-    // LIVE GDELT events: pulsing square (news icon aesthetic)
-    return `
-      <div style="position:relative;width:${sz*3}px;height:${sz*3}px">
-        <div style="position:absolute;top:50%;left:50%;
-          width:${sz*2}px;height:${sz*2}px;
-          border:1.5px solid ${c};
-          transform:translate(-50%,-50%);
-          animation:ping 2s ease-out infinite;opacity:0;
-          border-radius:2px"></div>
-        <div style="position:absolute;top:50%;left:50%;
-          width:${sz}px;height:${sz}px;
-          background:${c};
-          transform:translate(-50%,-50%) rotate(45deg);
-          box-shadow:0 0 ${sz}px ${c};
-          animation:${event.severity==="critical"?"pcrit":"phigh"} 2s infinite;
-          border-radius:1px"></div>
-        <div style="position:absolute;top:50%;left:50%;
-          transform:translate(-50%,-190%);font-size:${sz-1}px;line-height:1">
-          📰
-        </div>
-      </div>`;
-  } else {
-    // STATIC events: pulsing circle (permanent hotspot)
-    return `
-      <div style="position:relative;width:${sz*3}px;height:${sz*3}px">
-        <div style="position:absolute;top:50%;left:50%;
-          width:${sz*2.2}px;height:${sz*2.2}px;
-          border-radius:50%;border:2px solid ${c};
-          transform:translate(-50%,-50%);
-          animation:ping 2s ease-out infinite;opacity:0"></div>
-        <div style="position:absolute;top:50%;left:50%;
-          width:${sz}px;height:${sz}px;
-          border-radius:50%;background:${c};
-          transform:translate(-50%,-50%);
-          box-shadow:0 0 ${sz}px ${c};
-          animation:${event.severity==="critical"?"pcrit":"phigh"} 2s infinite"></div>
-        <div style="position:absolute;top:50%;left:50%;
-          transform:translate(-50%,-170%);font-size:${sz}px;line-height:1">
-          ${event.type}
-        </div>
-      </div>`;
-  }
-}
-
-function makePopupHtml(event) {
-  const c   = SEV_COLOR[event.severity] || "#7aacbe";
-  const liveBadge = event.isLive
-    ? `<span style="font-size:9px;background:rgba(0,212,255,.15);border:1px solid #00d4ff44;color:#00d4ff;padding:1px 6px;font-family:Share Tech Mono,monospace;letter-spacing:1px;margin-left:6px">GDELT LIVE</span>`
-    : `<span style="font-size:9px;background:rgba(255,107,0,.1);border:1px solid #ff6b0044;color:#ff6b00;padding:1px 6px;font-family:Share Tech Mono,monospace;letter-spacing:1px;margin-left:6px">BASELINE</span>`;
-
-  return `
-    <div style="min-width:220px;max-width:290px;font-family:Rajdhani,sans-serif">
-      <div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;flex-wrap:wrap">
-        <b style="font-family:Teko,sans-serif;font-size:16px;color:#e8f4f8;line-height:1.2">${event.type} ${event.title}</b>
-        ${liveBadge}
-      </div>
-      <div style="font-size:12px;color:#7aacbe;line-height:1.5;margin-bottom:7px">${event.detail}</div>
-      <div style="display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap">
-        <span style="font-size:9px;color:${c};border:1px solid ${c}44;padding:1px 6px;font-family:Teko,sans-serif;letter-spacing:1px">${event.severity.toUpperCase()}</span>
-        <span style="font-size:9px;color:#3a6678;font-family:Share Tech Mono,monospace">${event.updated}</span>
-      </div>
-      <div style="font-size:10px;color:#3a6678;font-family:Share Tech Mono,monospace;margin-top:3px">
-        🇮🇳 India: ${event.india} · ${event.country}
-      </div>
-      ${event.url && event.url !== "#" ? `<a href="${event.url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:7px;font-size:10px;color:#00d4ff;font-family:Share Tech Mono,monospace;text-decoration:none;border:1px solid #00d4ff33;padding:2px 8px">→ READ SOURCE</a>` : ""}
-    </div>`;
-}
-
-const CSS = `
-  .livemap-panel { position:relative;background:#050d12;border:1px solid #0f3040;border-radius:2px;overflow:hidden;display:flex;flex-direction:column; }
-  .livemap-panel::before { content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#00d4ff,transparent);opacity:.35; }
-  .map-header { padding:9px 14px;border-bottom:1px solid #0f3040;background:linear-gradient(90deg,#0a1e25,transparent);display:flex;align-items:center;gap:9px;flex-wrap:wrap;flex-shrink:0; }
-  .map-wrap { flex:1;position:relative;min-height:320px; }
-  #live-map { width:100%;height:100%;min-height:320px; }
-
-  /* Leaflet dark theme */
-  .leaflet-container { background:#020608 !important; }
-  .leaflet-tile { filter:brightness(.52) saturate(.25) hue-rotate(185deg) invert(1) !important; }
-  .leaflet-control-zoom a { background:#050d12 !important;color:#00d4ff !important;border-color:#0f3040 !important; }
-  .leaflet-popup-content-wrapper { background:#050d12 !important;border:1px solid #1a5068 !important;border-radius:2px !important;box-shadow:0 0 24px rgba(0,212,255,.2) !important; }
-  .leaflet-popup-tip { background:#050d12 !important; }
-  .leaflet-popup-content { color:#e8f4f8 !important;margin:10px 14px !important; }
-  .leaflet-control-attribution { background:rgba(2,6,8,.85) !important;color:#1a5068 !important;font-size:8px !important; }
-  .leaflet-attribution-flag { display:none !important; }
-
-  /* Map legend */
-  .map-legend { position:absolute;bottom:10px;left:10px;z-index:1000;background:rgba(5,13,18,.94);border:1px solid #0f3040;padding:8px 10px;pointer-events:none; }
-  .leg-row { display:flex;align-items:center;gap:6px;font-size:9px;color:#7aacbe;margin-bottom:3px;font-family:Share Tech Mono,monospace; }
-  .leg-dot { width:7px;height:7px;border-radius:50%;flex-shrink:0; }
-  .leg-sq  { width:7px;height:7px;transform:rotate(45deg);flex-shrink:0; }
-
-  /* GDELT status bar */
-  .gdelt-bar { padding:5px 14px;border-top:1px solid #0f3040;background:#020608;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0; }
-
-  /* Live event list */
-  .live-events { border-top:1px solid #0f3040;max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a5068 transparent;flex-shrink:0; }
-  .live-event-row { padding:6px 14px;border-bottom:1px solid #071419;display:flex;gap:8px;align-items:flex-start;cursor:pointer;transition:background .15s; }
-  .live-event-row:hover { background:#071419; }
-  .live-tag { font-size:8px;font-family:Share Tech Mono,monospace;padding:1px 5px;border:1px solid;border-radius:1px;flex-shrink:0;margin-top:2px; }
-
-  @keyframes pulse-live { 0%,100%{opacity:1;box-shadow:0 0 6px #ff2d2d} 50%{opacity:.3} }
-  .live-dot { display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff2d2d;animation:pulse-live 1.2s infinite;flex-shrink:0; }
-  @keyframes spin { to{transform:rotate(360deg)} }
-  .spinner { width:10px;height:10px;border:2px solid #0f3040;border-top-color:#00d4ff;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0; }
-
-  /* New event flash */
-  @keyframes new-flash { 0%{background:rgba(0,212,255,.15)} 100%{background:transparent} }
-  .new-event { animation:new-flash 2s ease-out forwards; }
-`;
-
-export default function LiveMap({ height = 380, showEventList = true }) {
-  const mapRef    = useRef(null);
-  const leafRef   = useRef(null);
-  const layersRef = useRef({ static: [], live: [] });
-  const [selected, setSelected]   = useState(null);
-  const [timer,    setTimer]      = useState("--:--");
-
-  const {
-    events, gdeltEvents, sindoorSignal,
-    loading, error, lastFetch, liveCount,
-    refetch, timeUntilNext, fetchCount,
-  } = useGDELT();
-
-  // Init map once
   useEffect(() => {
-    let mounted = true;
-    async function init() {
-      const L = await loadLeaflet();
-      if (!mounted || !mapRef.current || leafRef.current) return;
+    if (mapInstanceRef.current || !mapRef.current) return;
 
-      const map = L.map(mapRef.current, { center:[20,65], zoom:3, zoomControl:true });
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution:"© OpenStreetMap | GDELT OSINT",
-        maxZoom:10,
-      }).addTo(map);
-      leafRef.current = map;
+    // Load Leaflet dynamically
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
 
-      // Trade routes
-      [
-        [[19,72.8],[24,58],[26.5,55]],
-        [[13,80.3],[6,93],[1.3,103.8]],
-        [[15,54],[12.5,44],[29,32.5]],
-        [[8.6,81.2],[7,80],[5,73]],
-      ].forEach(pts => L.polyline(pts, { color:"#00d4ff", weight:1.2, opacity:.22, dashArray:"5,9" }).addTo(map));
-    }
-    init();
-    return () => { mounted=false; if(leafRef.current){ leafRef.current.remove(); leafRef.current=null; } };
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => initMap();
+    document.head.appendChild(script);
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, []);
 
-  // Refresh markers whenever events change
-  useEffect(() => {
+  function initMap() {
     const L = window.L;
-    if (!L || !leafRef.current) return;
-    const map = leafRef.current;
+    if (!L || mapInstanceRef.current) return;
 
-    // Remove old live markers (don't remove static ones)
-    layersRef.current.live.forEach(m => map.removeLayer(m));
-    layersRef.current.live = [];
+    const map = L.map(mapRef.current, {
+      center: sindoorMode ? [30.5, 72.0] : [28.5, 78.0],
+      zoom: sindoorMode ? 6 : 5,
+      zoomControl: true,
+      attributionControl: false,
+    });
 
-    // Remove old static markers on first load then re-add
-    if (fetchCount <= 1) {
-      layersRef.current.static.forEach(m => map.removeLayer(m));
-      layersRef.current.static = [];
-    }
+    // Dark military tile
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      subdomains: 'abcd',
+    }).addTo(map);
 
-    events.forEach(ev => {
-      const icon = L.divIcon({
-        className: "",
-        html: makeMarkerHtml(ev),
-        iconSize:   [ev.severity === "critical" ? 42 : 30, ev.severity === "critical" ? 42 : 30],
-        iconAnchor: [ev.severity === "critical" ? 21 : 15, ev.severity === "critical" ? 21 : 15],
+    // Trade routes
+    const tradeRoutes = [
+      [[11.0, 44.0], [15.0, 55.0], [20.0, 63.0], [22.0, 68.0], [19.0, 72.8]], // Horn of Africa → Mumbai
+      [[1.0, 104.0], [8.0, 98.0], [12.0, 90.0], [13.0, 80.5]], // Malacca → Chennai
+      [[25.0, 57.0], [22.0, 62.0], [19.0, 67.0], [18.0, 72.8]], // Hormuz → Mumbai
+    ];
+    tradeRoutes.forEach(route => {
+      L.polyline(route, { color: '#1a6b8a', weight: 1.5, opacity: 0.5, dashArray: '6,4' }).addTo(map);
+    });
+
+    // LoC line
+    const loc = [[36.8, 74.5], [35.9, 75.2], [34.5, 74.2], [33.7, 73.9], [33.0, 73.7], [32.5, 74.0], [32.0, 74.7]];
+    L.polyline(loc, { color: '#ff4444', weight: 2, opacity: 0.8, dashArray: '8,4' }).addTo(map);
+    L.tooltip({ permanent: true, direction: 'right', className: 'map-label' })
+      .setContent('LoC')
+      .setLatLng([33.5, 74.5])
+      .addTo(map);
+
+    // LAC line (approximate)
+    const lac = [[35.5, 78.5], [34.5, 78.0], [33.8, 77.5], [32.5, 79.0], [31.0, 79.5], [28.0, 84.0], [27.0, 88.5], [26.5, 92.0]];
+    L.polyline(lac, { color: '#ff8c00', weight: 2, opacity: 0.7, dashArray: '5,5' }).addTo(map);
+    L.tooltip({ permanent: true, direction: 'right', className: 'map-label' })
+      .setContent('LAC')
+      .setLatLng([30.0, 81.0])
+      .addTo(map);
+
+    mapInstanceRef.current = map;
+    renderMarkers();
+  }
+
+  function renderMarkers() {
+    const L = window.L;
+    if (!L || !mapInstanceRef.current) return;
+
+    // Clear old markers
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    const filtered = filter === 'ALL' ? events :
+      filter === 'INDIA' ? events.filter(e => e.indiaRelevant) :
+      filter === 'CRITICAL' ? events.filter(e => e.severity === 'CRITICAL') :
+      events.filter(e => {
+        const t = (e.title || '').toLowerCase();
+        if (filter === 'PAK') return t.includes('pakistan') || t.includes('kashmir');
+        if (filter === 'CHINA') return t.includes('china') || t.includes('lac') || t.includes('depsang');
+        return true;
       });
 
-      const marker = L.marker([ev.lat, ev.lng], { icon })
-        .bindPopup(makePopupHtml(ev), { maxWidth:300, className:"dark-popup" })
-        .addTo(map);
+    let liveEvents = 0;
+    filtered.forEach(event => {
+      if (!event.lat || !event.lng) return;
+      const isLive = event.source !== 'baseline';
+      if (isLive) liveEvents++;
 
-      marker.on("click", () => setSelected(ev));
+      const color = SEVERITY_COLOR[event.severity] || '#ffd700';
+      const radius = SEVERITY_RADIUS[event.severity] || 8;
 
-      if (ev.isLive) {
-        layersRef.current.live.push(marker);
-      } else {
-        if (fetchCount <= 1) layersRef.current.static.push(marker);
-      }
+      // Pulsing circle for critical/live events
+      const html = isLive
+        ? `<div style="position:relative;width:${radius*2}px;height:${radius*2}px">
+            <div style="position:absolute;inset:0;border-radius:50%;background:${color};opacity:0.3;animation:pulse 2s infinite"></div>
+            <div style="position:absolute;inset:3px;border-radius:50%;background:${color};border:1px solid white"></div>
+           </div>`
+        : `<div style="width:${radius*1.5}px;height:${radius*1.5}px;border-radius:50%;background:${color};opacity:0.6;border:1px solid ${color}40"></div>`;
+
+      const icon = L.divIcon({ html, className: '', iconAnchor: [radius, radius] });
+      const marker = L.marker([event.lat, event.lng], { icon })
+        .bindPopup(`
+          <div style="background:#1a1a2e;color:#e0e0e0;padding:10px;min-width:200px;font-family:monospace;font-size:11px">
+            <div style="color:${color};font-weight:bold;margin-bottom:4px">${event.severity} ${isLive ? '● LIVE' : '◌ BASELINE'}</div>
+            <div style="margin-bottom:6px;font-size:12px">${event.title}</div>
+            ${event.source ? `<div style="color:#888">SOURCE: ${event.source}</div>` : ''}
+            ${event.date ? `<div style="color:#888">${new Date(event.date).toLocaleString('en-IN')}</div>` : ''}
+            ${event.url ? `<a href="${event.url}" target="_blank" style="color:#00d4ff;display:block;margin-top:6px">→ READ SOURCE</a>` : ''}
+            <button onclick="navigator.share ? navigator.share({title:'War Desk Alert',text:'${event.title.replace(/'/g,'')}',url:'https://war-desk.vercel.app'}) : window.open('https://wa.me/?text=${encodeURIComponent(event.title + ' — war-desk.vercel.app')}')" 
+              style="margin-top:8px;background:#25D366;border:none;color:white;padding:4px 8px;cursor:pointer;font-size:10px;border-radius:2px">
+              📤 Share on WhatsApp
+            </button>
+          </div>
+        `, { maxWidth: 280 })
+        .addTo(mapInstanceRef.current);
+
+      markersRef.current.push(marker);
     });
-  }, [events, fetchCount]);
 
-  // Countdown timer
+    // High value assets
+    if (showAssets) {
+      INDIA_ASSETS.forEach(asset => {
+        const html = `<div style="font-size:16px;filter:drop-shadow(0 0 4px #00d4ff)">${asset.icon}</div>`;
+        const icon = L.divIcon({ html, className: '', iconAnchor: [8, 8] });
+        const marker = L.marker([asset.lat, asset.lng], { icon })
+          .bindPopup(`<div style="background:#1a1a2e;color:#00d4ff;padding:8px;font-family:monospace;font-size:11px"><b>${asset.label}</b><br><span style="color:#888">${asset.type}</span></div>`)
+          .addTo(mapInstanceRef.current);
+        markersRef.current.push(marker);
+      });
+    }
+
+    setLiveCount(liveEvents);
+  }
+
   useEffect(() => {
-    const t = setInterval(() => setTimer(timeUntilNext()), 1000);
-    return () => clearInterval(t);
-  }, [lastFetch, timeUntilNext]);
+    if (mapInstanceRef.current) renderMarkers();
+  }, [events, filter, showAssets]);
 
-  const timeStr = lastFetch
-    ? lastFetch.toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", hour12:false }) + " IST"
-    : "--:--";
+  // Fly to sindoor mode
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    if (sindoorMode) {
+      mapInstanceRef.current.flyTo([30.5, 72.0], 6, { duration: 1.5 });
+    } else {
+      mapInstanceRef.current.flyTo([28.5, 78.0], 5, { duration: 1.5 });
+    }
+  }, [sindoorMode]);
+
+  const shareMap = () => {
+    const text = `🇮🇳 India War Desk — Live Geopolitical Intelligence\n${liveCount} live events tracked right now\nhttps://war-desk.vercel.app`;
+    if (navigator.share) {
+      navigator.share({ title: 'India War Desk', text, url: 'https://war-desk.vercel.app' });
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    }
+  };
 
   return (
-    <>
-      <style>{CSS}</style>
+    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#0a0a14' }}>
       <style>{`
-        @keyframes ping  { 0%{transform:translate(-50%,-50%) scale(0);opacity:.8} 100%{transform:translate(-50%,-50%) scale(2.5);opacity:0} }
-        @keyframes pcrit { 0%,100%{transform:translate(-50%,-50%) scale(1);box-shadow:0 0 16px #ff2d2d} 50%{transform:translate(-50%,-50%) scale(1.5)} }
-        @keyframes phigh { 0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.3)} }
+        @keyframes pulse { 0%,100%{transform:scale(1);opacity:0.3} 50%{transform:scale(2.5);opacity:0} }
+        .map-label { background:transparent!important;border:none!important;color:#ffffff88!important;font-size:9px!important;font-weight:bold!important;white-space:nowrap!important }
+        .leaflet-popup-content-wrapper { background:#1a1a2e!important;border:1px solid #333!important;border-radius:2px!important;box-shadow:0 0 20px rgba(0,200,255,0.2)!important }
+        .leaflet-popup-tip { background:#1a1a2e!important }
       `}</style>
 
-      <div className="livemap-panel" style={{ height }}>
-        {/* Header */}
-        <div className="map-header">
-          <span style={{ color:"#00d4ff", fontSize:14 }}>🌍</span>
-          <span style={{ fontFamily:"Teko,sans-serif", fontSize:14, letterSpacing:2, textTransform:"uppercase", color:"#7aacbe" }}>
-            LIVE GEOPOLITICAL MAP
-          </span>
-
-          {loading
-            ? <div className="spinner"/>
-            : <div className="live-dot"/>
-          }
-
-          <span style={{ fontFamily:"Share Tech Mono,monospace", fontSize:9, color:"#3a6678" }}>
-            {loading ? "FETCHING GDELT..." : `${liveCount} LIVE + ${events.length - liveCount} BASELINE`}
-          </span>
-
-          {error && (
-            <span style={{ fontFamily:"Share Tech Mono,monospace", fontSize:9, color:"#ff6b00" }}>
-              ⚠ GDELT unavailable — showing baseline
-            </span>
-          )}
-
-          <span style={{ marginLeft:"auto", fontFamily:"Share Tech Mono,monospace", fontSize:9, color:"#1a5068" }}>
-            NEXT UPDATE: {timer}
-          </span>
-
-          <button onClick={refetch} style={{ background:"rgba(0,212,255,.08)", border:"1px solid rgba(0,212,255,.2)", color:"#00d4ff", fontFamily:"Teko,sans-serif", fontSize:11, letterSpacing:2, padding:"2px 10px", cursor:"pointer", borderRadius:1 }}>
-            ↺ REFRESH
-          </button>
-        </div>
-
-        {/* Map */}
-        <div className="map-wrap" style={{ flex:1 }}>
-          <div id="live-map" ref={mapRef} style={{ width:"100%", height:"100%", minHeight: height - 100 }}/>
-
-          {/* Legend */}
-          <div className="map-legend">
-            <div style={{ fontFamily:"Teko,sans-serif", fontSize:10, letterSpacing:2, color:"#1a5068", marginBottom:5 }}>SEVERITY</div>
-            {Object.entries(SEV_COLOR).map(([s,c]) => (
-              <div key={s} className="leg-row">
-                <div className="leg-dot" style={{ background:c }}/>
-                {s.toUpperCase()}
-              </div>
-            ))}
-            <div style={{ borderTop:"1px solid #0f3040", marginTop:5, paddingTop:5 }}>
-              <div className="leg-row"><div className="leg-dot" style={{ background:"#00d4ff", borderRadius:0, transform:"rotate(45deg)" }}/> GDELT LIVE</div>
-              <div className="leg-row"><div className="leg-dot" style={{ background:"#ff6b00" }}/> BASELINE</div>
-              <div className="leg-row" style={{ marginTop:3 }}><span style={{ color:"#00d4ff", marginRight:5, fontSize:10 }}>---</span>Trade routes</div>
-            </div>
-          </div>
-        </div>
-
-        {/* GDELT status bar */}
-        <div className="gdelt-bar">
-          <div className="live-dot" style={{ width:5, height:5 }}/>
-          <span style={{ fontFamily:"Share Tech Mono,monospace", fontSize:9, color:"#3a6678" }}>
-            GDELT · Last fetch: {timeStr}
-          </span>
-          {sindoorSignal && (
-            <>
-              <span style={{ fontFamily:"Share Tech Mono,monospace", fontSize:9, color:"#1a5068" }}>|</span>
-              <span style={{ fontFamily:"Share Tech Mono,monospace", fontSize:9, color: sindoorSignal.critical_24h > 2 ? "#ff2d2d" : "#ff6b00" }}>
-                SINDOOR SIGNAL: {sindoorSignal.critical_24h} critical + {sindoorSignal.high_24h} high events (24h)
-              </span>
-            </>
-          )}
-          <span style={{ marginLeft:"auto", fontFamily:"Share Tech Mono,monospace", fontSize:8, color:"#1a5068" }}>
-            GDELT 2.0 · Updates every 15min · Open-source intelligence
-          </span>
-        </div>
-
-        {/* Live event list */}
-        {showEventList && gdeltEvents.length > 0 && (
-          <div className="live-events">
-            <div style={{ padding:"5px 14px 3px", fontFamily:"Teko,sans-serif", fontSize:11, letterSpacing:2, color:"#1a5068", borderBottom:"1px solid #071419" }}>
-              GDELT LIVE EVENTS — {gdeltEvents.length} ARTICLES PLOTTED
-            </div>
-            {gdeltEvents.slice(0, 8).map((ev, i) => {
-              const c = SEV_COLOR[ev.severity] || "#7aacbe";
-              return (
-                <div key={ev.id} className={`live-event-row${i === 0 && fetchCount > 1 ? " new-event" : ""}`}
-                  onClick={() => { setSelected(ev); if(leafRef.current) leafRef.current.flyTo([ev.lat, ev.lng], 5, { duration:1.2 }); }}>
-                  <span className="live-tag" style={{ color:c, borderColor:`${c}44` }}>{ev.severity.slice(0,4).toUpperCase()}</span>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:11, color:"#c8dde6", lineHeight:1.4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{ev.title}</div>
-                    <div style={{ fontSize:9, color:"#1a5068", fontFamily:"Share Tech Mono,monospace", marginTop:1 }}>
-                      {ev.country} · {ev.updated} · {ev.india === "Relevant" ? "🇮🇳 India-relevant" : "Global"}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Filter bar */}
+      <div style={{ position: 'absolute', top: 8, left: 50, zIndex: 1000, display: 'flex', gap: 4 }}>
+        {['ALL','INDIA','CRITICAL','PAK','CHINA'].map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{
+            background: filter === f ? '#00d4ff' : 'rgba(0,0,0,0.7)',
+            color: filter === f ? '#000' : '#aaa',
+            border: `1px solid ${filter === f ? '#00d4ff' : '#333'}`,
+            padding: '2px 8px', fontSize: 9, fontFamily: 'monospace',
+            cursor: 'pointer', letterSpacing: 1
+          }}>{f}</button>
+        ))}
+        <button onClick={() => setShowAssets(!showAssets)} style={{
+          background: showAssets ? 'rgba(0,212,255,0.2)' : 'rgba(0,0,0,0.7)',
+          color: showAssets ? '#00d4ff' : '#666',
+          border: '1px solid #333', padding: '2px 8px',
+          fontSize: 9, fontFamily: 'monospace', cursor: 'pointer'
+        }}>⚓ ASSETS</button>
       </div>
-    </>
+
+      {/* Live count + share */}
+      <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000, display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span style={{ background: 'rgba(0,0,0,0.8)', border: '1px solid #333', padding: '3px 8px', fontSize: 10, color: '#00ff88', fontFamily: 'monospace' }}>
+          {liveCount > 0 ? `● ${liveCount} LIVE` : '◌ LOADING'}
+        </span>
+        <button onClick={shareMap} style={{
+          background: '#25D366', border: 'none', color: 'white',
+          padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'monospace'
+        }}>📤 SHARE</button>
+      </div>
+
+      {/* Legend */}
+      <div style={{ position: 'absolute', bottom: 30, left: 8, zIndex: 1000, background: 'rgba(0,0,0,0.8)', border: '1px solid #333', padding: 8, fontSize: 9, fontFamily: 'monospace', color: '#aaa' }}>
+        {Object.entries(SEVERITY_COLOR).map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: v }} />
+            {k}
+          </div>
+        ))}
+        <div style={{ marginTop: 4, borderTop: '1px solid #333', paddingTop: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span>◆</span> GDELT LIVE</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span>○</span> BASELINE</div>
+          <div style={{ borderTop: '1px solid #ff444440', marginTop: 3, paddingTop: 3, color: '#ff4444' }}>— LoC</div>
+          <div style={{ color: '#ff8c00' }}>— LAC</div>
+          <div style={{ color: '#1a6b8a' }}>--- Trade</div>
+        </div>
+      </div>
+
+      <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+    </div>
   );
 }
