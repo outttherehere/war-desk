@@ -369,6 +369,8 @@ export default function App() {
         enabled={music.enabled}
         onToggleMute={music.toggleMute}
         onToggleEnabled={music.toggleEnabled}
+        unlocked={music.unlocked}
+        onUnlock={music.unlockAudio}
       />
     </div>
   );

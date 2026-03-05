@@ -1,168 +1,181 @@
-// useMusicPlayer.js — Ambient conflict music system
-// Uses YouTube IFrame API for audio (free, no licensing issues)
-// Fades in on hover, fades out on cursor leave
+// useMusicPlayer.js — Fixed music system
+// Uses a visible-but-tiny YouTube iframe that user clicks once to unlock audio
+// After first click, all subsequent hovers trigger music automatically
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getMusicForEvent, getMusicForArticle, CONFLICT_MUSIC } from '../music/conflictMusic';
 
-// Curated YouTube video IDs for each track (instrumental/OST, safe for use)
-// These are official uploads or licensed OST channels
-const YOUTUBE_IDS = {
-  'Hans Zimmer Arrival Heptapod B': 'VB8gFNMmDLE',
-  'Ludwig Goransson Oppenheimer Can You Hear The Music': 'HWtCUuOPUME',
-  'Lone Survivor OST Surrender Explosions in the Sky': '7dK9GF5VIw8',
-  'Hans Zimmer Dunkirk Supermarine': 'RTLM8T_EGFk',
-  'Hans Zimmer Dunkirk The Mole': 'RTLM8T_EGFk',
-  'Society of the Snow OST La Sociedad de la Nieve Michael Giacchino': 'xLB7DEiuBSY',
-  'Ludwig Goransson Oppenheimer Destroyer of Worlds': 'HWtCUuOPUME',
-  'Great Escape Elmer Bernstein Prague Philharmonic': 'b1gfJ3fVjFk',
-  'Ludwig Goransson Killmonger Black Panther OST': 'kU9miZpPBQM',
-  'Max Richter On The Nature Of Daylight': 'b_YHOcBsb9g',
+// Verified YouTube video IDs (OST uploads, long-form)
+export const YOUTUBE_IDS = {
+  CRITICAL_ESCALATION: 'VB8gFNMmDLE',      // Arrival - Heptapod B
+  NUCLEAR:             'HWtCUuOPUME',       // Oppenheimer OST
+  INDIA_PAKISTAN:      'q_4HnGDKoZo',      // Lone Survivor OST
+  INDIA_CHINA:         'RTLM8T_EGFk',      // Dunkirk - Supermarine  
+  NAVAL:               'RTLM8T_EGFk',      // Dunkirk OST
+  TERROR:              'q_4HnGDKoZo',      // Lone Survivor
+  CEASEFIRE:           'xLB7DEiuBSY',      // Society of the Snow
+  CIVILIAN_COST:       'HWtCUuOPUME',      // Oppenheimer
+  WAR_GENERAL:         'b1gfJ3fVjFk',      // Great Escape
+  BORDER_TENSION:      'kU9miZpPBQM',      // Killmonger
+  DEFAULT:             'b_YHOcBsb9g',      // Max Richter - On The Nature of Daylight
 };
+
+function getMusicType(event) {
+  if (!event) return 'DEFAULT';
+  const text = (event.title || event.label || event.sublabel || '').toLowerCase();
+  if (text.match(/nuclear|nuke|warhead|icbm|ballistic/)) return 'NUCLEAR';
+  if (text.match(/ceasefire|peace|withdrawal|deescalat/)) return 'CEASEFIRE';
+  if (text.match(/civilian|children|innocent|casualt/)) return 'CIVILIAN_COST';
+  if (text.match(/pakistan|kashmir|loc|isi|bahawalpur|muridke/)) return 'INDIA_PAKISTAN';
+  if (text.match(/china|lac|depsang|galwan|pla|taiwan/)) return 'INDIA_CHINA';
+  if (text.match(/navy|warship|fleet|maritime|hormuz|arabian|houthi|red sea/)) return 'NAVAL';
+  if (text.match(/terror|attack|bomb|explosion|fidayeen/)) return 'TERROR';
+  if (text.match(/ukraine|russia|gaza|israel|iran/)) return 'CRITICAL_ESCALATION';
+  if (text.match(/border|myanmar|bangladesh/)) return 'BORDER_TENSION';
+  if (event.severity === 'CRITICAL') return 'CRITICAL_ESCALATION';
+  if (event.severity === 'HIGH') return 'WAR_GENERAL';
+  return 'DEFAULT';
+}
 
 export function useMusicPlayer() {
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(0.5);
   const [muted, setMuted] = useState(false);
-  const [enabled, setEnabled] = useState(true); // user can toggle music off
+  const [enabled, setEnabled] = useState(true);
+  const [unlocked, setUnlocked] = useState(false); // browser autoplay unlocked?
   const playerRef = useRef(null);
-  const fadeIntervalRef = useRef(null);
-  const hoverTimeoutRef = useRef(null);
-  const iframeRef = useRef(null);
+  const hoverTimeout = useRef(null);
+  const currentTypeRef = useRef(null);
 
-  // Initialize YouTube IFrame API
+  // Create hidden YouTube player on mount
   useEffect(() => {
-    if (window.YT) return;
-    const script = document.createElement('script');
-    script.src = 'https://www.youtube.com/iframe_api';
-    document.head.appendChild(script);
-    
+    // Load YT API
+    if (!window.YT) {
+      const s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(s);
+    }
+
     window.onYouTubeIframeAPIReady = () => {
-      // API ready
-    };
-  }, []);
+      const div = document.createElement('div');
+      div.id = 'yt-player-hidden';
+      div.style.cssText = 'position:fixed;bottom:-2px;right:200px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:1';
+      document.body.appendChild(div);
 
-  const fadeIn = useCallback((targetVol) => {
-    if (!playerRef.current || muted || !enabled) return;
-    clearInterval(fadeIntervalRef.current);
-    let vol = 0;
-    fadeIntervalRef.current = setInterval(() => {
-      vol = Math.min(targetVol * 100, vol + 2);
-      try { playerRef.current?.setVolume(vol); } catch(e) {}
-      if (vol >= targetVol * 100) clearInterval(fadeIntervalRef.current);
-    }, 50);
-  }, [muted, enabled]);
-
-  const fadeOut = useCallback(() => {
-    if (!playerRef.current) return;
-    clearInterval(fadeIntervalRef.current);
-    let vol = 50;
-    fadeIntervalRef.current = setInterval(() => {
-      vol = Math.max(0, vol - 3);
-      try { playerRef.current?.setVolume(vol); } catch(e) {}
-      if (vol <= 0) {
-        clearInterval(fadeIntervalRef.current);
-        try { playerRef.current?.pauseVideo(); } catch(e) {}
-        setIsPlaying(false);
-      }
-    }, 60);
-  }, []);
-
-  const playTrack = useCallback((music) => {
-    if (!enabled || !music) return;
-    const ytId = YOUTUBE_IDS[music.query] || YOUTUBE_IDS[Object.keys(YOUTUBE_IDS)[0]];
-    
-    setCurrentTrack(music);
-    
-    if (!playerRef.current && window.YT?.Player) {
-      // Create hidden player div if not exists
-      let playerDiv = document.getElementById('yt-music-player');
-      if (!playerDiv) {
-        playerDiv = document.createElement('div');
-        playerDiv.id = 'yt-music-player';
-        playerDiv.style.cssText = 'position:fixed;bottom:-1px;left:-1px;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1';
-        document.body.appendChild(playerDiv);
-      }
-      
-      playerRef.current = new window.YT.Player('yt-music-player', {
-        height: '1', width: '1',
-        videoId: ytId,
-        playerVars: { autoplay: 1, loop: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, playsinline: 1 },
+      playerRef.current = new window.YT.Player('yt-player-hidden', {
+        width: '1', height: '1',
+        videoId: YOUTUBE_IDS.DEFAULT,
+        playerVars: {
+          autoplay: 0, controls: 0, disablekb: 1,
+          fs: 0, iv_load_policy: 3, modestbranding: 1,
+          playsinline: 1, rel: 0, mute: 0
+        },
         events: {
-          onReady: (e) => {
-            e.target.setVolume(0);
-            e.target.playVideo();
-            setIsPlaying(true);
-            fadeIn(music.volume || 0.5);
+          onReady: () => { /* ready but not playing */ },
+          onStateChange: (e) => {
+            setIsPlaying(e.data === window.YT.PlayerState.PLAYING);
           }
         }
       });
-    } else if (playerRef.current) {
-      try {
-        playerRef.current.loadVideoById(ytId);
-        playerRef.current.setVolume(0);
-        playerRef.current.playVideo();
-        setIsPlaying(true);
-        fadeIn(music.volume || 0.5);
-      } catch(e) {}
-    }
-  }, [enabled, fadeIn]);
+    };
 
-  // Called when hovering over a conflict zone
+    // If YT already loaded, init immediately
+    if (window.YT?.Player) window.onYouTubeIframeAPIReady();
+  }, []);
+
+  const loadAndPlay = useCallback((musicType) => {
+    if (!enabled || !playerRef.current || currentTypeRef.current === musicType) return;
+    const ytId = YOUTUBE_IDS[musicType] || YOUTUBE_IDS.DEFAULT;
+    currentTypeRef.current = musicType;
+
+    try {
+      playerRef.current.loadVideoById({ videoId: ytId, startSeconds: 0 });
+      playerRef.current.setVolume(muted ? 0 : 55);
+      playerRef.current.playVideo();
+      setIsPlaying(true);
+      setUnlocked(true);
+    } catch (e) {
+      console.warn('YT play failed:', e);
+    }
+  }, [enabled, muted]);
+
+  const stopMusic = useCallback(() => {
+    clearTimeout(hoverTimeout.current);
+    currentTypeRef.current = null;
+    if (!playerRef.current) return;
+    try {
+      // Fade out
+      let vol = 55;
+      const fade = setInterval(() => {
+        vol -= 5;
+        if (playerRef.current) {
+          try { playerRef.current.setVolume(Math.max(0, vol)); } catch(e) {}
+        }
+        if (vol <= 0) {
+          clearInterval(fade);
+          try { playerRef.current?.pauseVideo(); } catch(e) {}
+          setIsPlaying(false);
+          setCurrentTrack(null);
+        }
+      }, 80);
+    } catch(e) {}
+  }, []);
+
   const onConflictHover = useCallback((event) => {
     if (!enabled) return;
-    clearTimeout(hoverTimeoutRef.current);
-    hoverTimeoutRef.current = setTimeout(() => {
-      const music = getMusicForEvent(event);
-      playTrack(music);
-    }, 600); // 600ms delay before music starts
-  }, [enabled, playTrack]);
+    clearTimeout(hoverTimeout.current);
+    hoverTimeout.current = setTimeout(() => {
+      const type = getMusicType(event);
+      const trackInfo = CONFLICT_MUSIC[type] || CONFLICT_MUSIC.DEFAULT;
+      setCurrentTrack(trackInfo);
+      loadAndPlay(type);
+    }, 500);
+  }, [enabled, loadAndPlay]);
 
-  // Called when hovering over a news article
   const onArticleHover = useCallback((article) => {
     if (!enabled) return;
-    clearTimeout(hoverTimeoutRef.current);
-    hoverTimeoutRef.current = setTimeout(() => {
+    clearTimeout(hoverTimeout.current);
+    hoverTimeout.current = setTimeout(() => {
       const music = getMusicForArticle(article);
-      playTrack(music);
-    }, 800);
-  }, [enabled, playTrack]);
+      const type = getMusicType({ title: article.title });
+      setCurrentTrack(music);
+      loadAndPlay(type);
+    }, 700);
+  }, [enabled, loadAndPlay]);
 
-  // Called on mouse leave
   const onHoverEnd = useCallback(() => {
-    clearTimeout(hoverTimeoutRef.current);
-    setTimeout(() => fadeOut(), 300);
-  }, [fadeOut]);
+    clearTimeout(hoverTimeout.current);
+    hoverTimeout.current = setTimeout(stopMusic, 1500); // delay so quick moves don't cut music
+  }, [stopMusic]);
+
+  // USER CLICK TO UNLOCK — browser requires user gesture for audio
+  const unlockAudio = useCallback(() => {
+    if (!playerRef.current) return;
+    try {
+      playerRef.current.playVideo();
+      setTimeout(() => {
+        playerRef.current?.pauseVideo();
+        setUnlocked(true);
+      }, 300);
+    } catch(e) {}
+  }, []);
 
   const toggleMute = () => {
     setMuted(!muted);
-    if (!muted) {
-      try { playerRef.current?.setVolume(0); } catch(e) {}
-    } else {
-      try { playerRef.current?.setVolume(50); } catch(e) {}
-    }
+    try {
+      if (!muted) playerRef.current?.setVolume(0);
+      else playerRef.current?.setVolume(55);
+    } catch(e) {}
   };
 
   const toggleEnabled = () => {
     setEnabled(!enabled);
-    if (enabled) {
-      fadeOut();
-      setCurrentTrack(null);
-    }
+    if (enabled) stopMusic();
   };
 
   return {
-    currentTrack,
-    isPlaying,
-    volume,
-    muted,
-    enabled,
-    onConflictHover,
-    onArticleHover,
-    onHoverEnd,
-    toggleMute,
-    toggleEnabled,
-    playTrack
+    currentTrack, isPlaying, muted, enabled, unlocked,
+    onConflictHover, onArticleHover, onHoverEnd,
+    toggleMute, toggleEnabled, unlockAudio
   };
 }
