@@ -48,37 +48,37 @@ html, body, #root {
 }
 
 /* ─── Mapbox GL overrides ────────────────────────────────────────────────── */
-.mapboxgl-ctrl-bottom-right {
+.maplibregl-ctrl-bottom-right {
   bottom: 8px !important;
   right: 8px !important;
 }
 
-.mapboxgl-ctrl-group {
+.maplibregl-ctrl-group {
   background: rgba(13,20,33,0.9) !important;
   border: 1px solid #1f3050 !important;
   border-radius: 4px !important;
   box-shadow: none !important;
 }
 
-.mapboxgl-ctrl-group button {
+.maplibregl-ctrl-group button {
   background: transparent !important;
   border-bottom: 1px solid #1f3050 !important;
   width: 26px !important;
   height: 26px !important;
 }
 
-.mapboxgl-ctrl-group button:last-child { border-bottom: none !important; }
+.maplibregl-ctrl-group button:last-child { border-bottom: none !important; }
 
-.mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
   filter: invert(0.7) sepia(0.2) saturate(0.5) !important;
 }
 
-.mapboxgl-ctrl-attrib {
+.maplibregl-ctrl-attrib {
   background: rgba(5,10,20,0.7) !important;
   border-radius: 3px !important;
 }
 
-.mapboxgl-ctrl-attrib a { color: #4a6080 !important; font-size: 9px !important; }
+.maplibregl-ctrl-attrib a { color: #4a6080 !important; font-size: 9px !important; }
 
 /* ─── Marker animations ──────────────────────────────────────────────────── */
 /* These are injected via JavaScript inline styles on each marker,
@@ -88,7 +88,7 @@ html, body, #root {
 .text-mono { font-family: monospace; }
 
 /* ─── Mapbox popup overrides (if used) ──────────────────────────────────── */
-.mapboxgl-popup-content {
+.maplibregl-popup-content {
   background: #0d1421 !important;
   border: 1px solid #1f3050 !important;
   border-radius: 6px !important;
@@ -99,6 +99,6 @@ html, body, #root {
   box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
 }
 
-.mapboxgl-popup-tip {
+.maplibregl-popup-tip {
   border-top-color: #1f3050 !important;
 }

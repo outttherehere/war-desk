@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Conflict } from '../types';
 
-mapboxgl.accessToken = (import.meta.env.VITE_MAPBOX_TOKEN as string) || 'MAPBOX_TOKEN_REQUIRED';
+// No API key needed — uses free Esri World Imagery + OpenStreetMap labels
+const mapboxgl = maplibregl;
 
 const INDIA_CENTER: [number, number] = [78.9629, 20.5937];
 const INDIA_ZOOM = 4.2;
@@ -106,21 +107,45 @@ function buildMarkerEl(conflict: Conflict): HTMLElement {
 
 export default function MapView({ conflicts, onConflictClick }: Props) {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
-  const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
   // Init map
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
+    // Free satellite + labels style using Esri World Imagery + OSM labels via MapLibre
+    const FREE_STYLE = {
+      version: 8 as const,
+      sources: {
+        'esri-satellite': {
+          type: 'raster' as const,
+          tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          attribution: 'Esri, Maxar, Earthstar Geographics',
+          maxzoom: 19,
+        },
+        'osm-labels': {
+          type: 'raster' as const,
+          tiles: ['https://tiles.stadiamaps.com/tiles/stamen_toner_labels/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          attribution: 'OpenStreetMap contributors',
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        { id: 'satellite', type: 'raster' as const, source: 'esri-satellite', paint: { 'raster-opacity': 1 } },
+        { id: 'labels', type: 'raster' as const, source: 'osm-labels', paint: { 'raster-opacity': 0.75 } },
+      ],
+    };
+
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      style: FREE_STYLE,
       center: INDIA_CENTER,
       zoom: INDIA_ZOOM,
       minZoom: 2.5,
       maxZoom: 12,
-      projection: { name: 'mercator' },
       attributionControl: false,
     });
 
