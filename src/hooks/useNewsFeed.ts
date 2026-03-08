@@ -7,7 +7,8 @@ const RSS_SOURCES = [
   { url: 'https://feeds.bbci.co.uk/news/world/middle_east/rss.xml',        label: 'BBC MidEast', cat: 'military'   as NewsCategory },
   { url: 'https://www.aljazeera.com/xml/rss/all.xml',                      label: 'Al Jazeera',  cat: 'diplomatic' as NewsCategory },
   { url: 'https://www.thehindu.com/news/international/feeder/default.rss', label: 'The Hindu',   cat: 'diplomatic' as NewsCategory },
-  { url: 'https://feeds.feedburner.com/ndtvnews-india-news',               label: 'NDTV',        cat: 'security'   as NewsCategory },
+  // NDTV world news (not India-general which includes crime/crime/lifestyle)
+  { url: 'https://feeds.feedburner.com/ndtvnews-world-news',               label: 'NDTV',        cat: 'security'   as NewsCategory },
 ];
 
 // GDELT full-text search: geopolitical/military events around India + Middle East
@@ -19,20 +20,35 @@ const GDELT_QUERIES = [
 
 // ─── Strict geopolitical keyword sets ────────────────────────────────────────
 
-// POSITIVE: article MUST contain at least one of these strong signals
+// POSITIVE: article MUST contain at least 3 of these to pass (strict geo-mil filter)
+// Deliberately excludes generic words like "security", "attack", "india" alone
 const STRONG_GEO_KEYWORDS = [
-  'india', 'indian', 'pakistan', 'china', 'kashmir', 'military', 'army', 'navy',
-  'airforce', 'nuclear', 'missile', 'terror', 'attack', 'conflict', 'war', 'ceasefire',
-  'border', 'loc', 'lac', 'infiltration', 'insurgency', 'houthi', 'israel', 'iran',
-  'taliban', 'myanmar', 'bangladesh', 'sri lanka', 'maldives', 'afghanistan',
-  'balakot', 'sindoor', 'pulwama', 'galwan', 'ladakh', 'arunachal',
-  'islamic state', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'ttp',
-  'pentagon', 'nato', 'quad', 'cpec', 'bri', 'pla', 'pla-n', 'ispr',
-  'sanction', 'embargo', 'strategic', 'geopolit', 'defence', 'security threat',
-  'warship', 'submarine', 'carrier', 'fighter jet', 'drone strike', 'airstrike',
-  'ceasefire', 'escalat', 'de-escalat', 'flashpoint', 'hostility', 'standoff',
-  'red sea', 'strait of hormuz', 'arabian sea', 'indian ocean', 'south china sea',
+  // Specific countries/regions with conflict relevance
+  'pakistan', 'china', 'kashmir', 'myanmar', 'bangladesh', 'afghanistan',
+  'maldives', 'sri lanka', 'iran', 'israel', 'houthi', 'hamas', 'hezbollah',
+  'taliban', 'north korea', 'taiwan', 'ukraine', 'russia',
+  // Military/security-specific terms (not generic)
+  'military', 'army', 'navy', 'air force', 'airforce', 'nuclear', 'missile',
+  'warship', 'submarine', 'carrier strike', 'fighter jet', 'drone strike', 'airstrike',
+  'artillery', 'troops', 'battalion', 'regiment', 'platoon',
+  // Geopolitical/conflict terms
+  'ceasefire', 'infiltration', 'insurgency', 'militant', 'terror attack',
+  'cross-border', 'loc', 'lac', 'line of control', 'line of actual control',
+  'standoff', 'escalation', 'de-escalation', 'flashpoint', 'confrontation',
+  'galwan', 'ladakh', 'arunachal', 'balakot', 'sindoor', 'pulwama',
+  // Terrorist organisations
+  'islamic state', 'isis', 'isil', 'al-qaeda', 'lashkar', 'jaish', 'ttp',
+  'boko haram', 'al-shabaab',
+  // Strategic/defence orgs
+  'pentagon', 'nato', 'quad', 'cpec', 'bri', 'pla ', 'pla-n', 'ispr',
+  'irgc', 'irgcn', 'mossad', 'cia', 'raw ',
+  // Maritime/strategic routes
+  'strait of hormuz', 'red sea', 'arabian sea', 'indian ocean', 'south china sea',
   'gulf of oman', 'persian gulf', 'chabahar', 'hambantota',
+  // Actions
+  'drone strike', 'missile launch', 'nuclear test', 'military exercise',
+  'war games', 'border tension', 'naval blockade', 'arms deal', 'weapons sale',
+  'geopolit', 'strategic competition', 'proxy war',
 ];
 
 // SUPPORT: secondary relevance boosters (only used to lift score, not gate)
@@ -73,14 +89,14 @@ function classifyCategory(text: string): NewsCategory {
   return best;
 }
 
-// Returns true if the article is relevant geopolitical/national-interest content
+// Returns true only for strictly geopolitical / national-interest content
 function isGeopoliticallyRelevant(text: string): boolean {
   const lower = text.toLowerCase();
-  // Hard block: non-geopolitical content
+  // Hard block first
   if (BLOCK_KEYWORDS.some((kw) => lower.includes(kw))) return false;
-  // Must have at least 2 strong geopolitical keywords
+  // Must match at least 3 distinct strong keywords (prevents single-country crime news)
   const strongHits = STRONG_GEO_KEYWORDS.filter((kw) => lower.includes(kw)).length;
-  return strongHits >= 2;
+  return strongHits >= 3;
 }
 
 function stripHtml(html: string): string {
