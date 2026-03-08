@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Conflict } from '../types';
-import { INDIA_CLAIMED_POLYGON, LOC_LINE, LAC_WESTERN, LAC_EASTERN } from '../data/borders';
+import { LOC_LINE, LAC_WESTERN, LAC_EASTERN } from '../data/borders';
 
 const INDIA_CENTER: [number, number] = [75.0, 20.0];
 const INDIA_ZOOM = 3.6;
@@ -23,6 +23,48 @@ const INTENSITY_SIZE: Record<string, number> = {
   critical: 22, high: 18, moderate: 15, low: 12,
 };
 
+// ─── India GeoJSON loader ─────────────────────────────────────────────────────
+// Loads authoritative India boundary from geohacker/india (Survey of India data)
+// Includes full claimed territory: PoK, Aksai Chin, full Arunachal Pradesh
+type IndiaGeom = { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] };
+let _indiaGeo: IndiaGeom | null = null;
+let _indiaFetch: Promise<void> | null = null;
+
+async function ensureIndiaGeo(): Promise<void> {
+  if (_indiaGeo) return;
+  if (_indiaFetch) { await _indiaFetch; return; }
+
+  _indiaFetch = (async () => {
+    const URLS = [
+      'https://cdn.jsdelivr.net/gh/geohacker/india@master/country/india.geojson',
+      'https://raw.githubusercontent.com/geohacker/india/master/country/india.geojson',
+    ];
+    for (const url of URLS) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) continue;
+        const gj = await r.json();
+        // Handle FeatureCollection, Feature, or raw geometry
+        const geom: unknown =
+          gj.type === 'FeatureCollection' ? gj.features?.[0]?.geometry :
+          gj.type === 'Feature'            ? gj.geometry :
+                                             gj;
+        if (
+          geom &&
+          typeof geom === 'object' &&
+          ((geom as IndiaGeom).type === 'Polygon' || (geom as IndiaGeom).type === 'MultiPolygon')
+        ) {
+          _indiaGeo = geom as IndiaGeom;
+          return;
+        }
+      } catch { continue; }
+    }
+  })();
+
+  await _indiaFetch;
+}
+
+// ─── Pulse CSS ────────────────────────────────────────────────────────────────
 function ensurePulseCSS() {
   if (document.getElementById('cdot-pulse-css')) return;
   const s = document.createElement('style');
@@ -86,8 +128,8 @@ function buildDotEl(conflict: Conflict): HTMLElement {
   return wrap;
 }
 
-// SVG overlay — converts geo coords to screen pixels via map.project()
-// Completely independent of MapLibre vector layer pipeline. Always works.
+// ─── SVG overlay ──────────────────────────────────────────────────────────────
+// Converts geo coords → screen pixels via map.project(). Redraws on every move/zoom.
 function setupSvgOverlay(map: maplibregl.Map, container: HTMLDivElement): () => void {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:visible;';
@@ -111,23 +153,38 @@ function setupSvgOverlay(map: maplibregl.Map, container: HTMLDivElement): () => 
     return el;
   };
 
+  // Build SVG path data from India geometry (Polygon or MultiPolygon)
+  const indiaPathData = (): string => {
+    if (!_indiaGeo) return '';
+    if (_indiaGeo.type === 'Polygon') {
+      // coordinates[0] is the outer ring
+      return toPath(_indiaGeo.coordinates[0] as number[][], true);
+    }
+    // MultiPolygon: coordinates is array of polygons, each polygon[0] is outer ring
+    return (_indiaGeo.coordinates as number[][][][])
+      .map((poly) => toPath(poly[0], true))
+      .join(' ');
+  };
+
   const draw = () => {
     svg.innerHTML = '';
 
-    const indiaBorder = INDIA_CLAIMED_POLYGON.geometry.coordinates[0] as number[][];
-    const loc = LOC_LINE.geometry.coordinates as number[][];
+    const loc  = LOC_LINE.geometry.coordinates as number[][];
     const lacW = LAC_WESTERN.geometry.coordinates as number[][];
     const lacE = LAC_EASTERN.geometry.coordinates as number[][];
 
-    // India fill
-    svg.appendChild(mkPath(toPath(indiaBorder, true), {
-      fill: 'rgba(255,50,50,0.08)', stroke: 'none',
-    }));
-    // India border line
-    svg.appendChild(mkPath(toPath(indiaBorder, true), {
-      fill: 'none', stroke: '#ff4040',
-      'stroke-width': '2.2', 'stroke-opacity': '0.92', 'stroke-linejoin': 'round',
-    }));
+    // India fill + border (only if geometry loaded)
+    const iPath = indiaPathData();
+    if (iPath) {
+      svg.appendChild(mkPath(iPath, {
+        fill: 'rgba(255,50,50,0.08)', stroke: 'none',
+      }));
+      svg.appendChild(mkPath(iPath, {
+        fill: 'none', stroke: '#ff4040',
+        'stroke-width': '2.2', 'stroke-opacity': '0.92', 'stroke-linejoin': 'round',
+      }));
+    }
+
     // LoC
     svg.appendChild(mkPath(toPath(loc), {
       fill: 'none', stroke: '#ff9500',
@@ -147,6 +204,9 @@ function setupSvgOverlay(map: maplibregl.Map, container: HTMLDivElement): () => 
       'stroke-dasharray': '5 5', 'stroke-linecap': 'round',
     }));
   };
+
+  // Start loading India geometry; redraw once it arrives
+  ensureIndiaGeo().then(() => draw()).catch(() => {/* show LoC/LAC without India border */});
 
   const events = ['move', 'zoom', 'pitch', 'rotate', 'resize'] as const;
   events.forEach((ev) => map.on(ev, draw));
