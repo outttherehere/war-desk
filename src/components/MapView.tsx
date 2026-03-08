@@ -2,13 +2,17 @@ import { useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Conflict } from '../types';
+import {
+  INDIA_CLAIMED_POLYGON,
+  LOC_LINE,
+  LAC_WESTERN,
+  LAC_EASTERN,
+} from '../data/borders';
 
-// No API key needed — uses free Esri World Imagery + OpenStreetMap labels
 const mapboxgl = maplibregl;
 
-// Shifted south + slightly west to fit all zones including Indian Ocean, Red Sea
-const INDIA_CENTER: [number, number] = [72.0, 18.0];
-const INDIA_ZOOM = 3.8;
+const INDIA_CENTER: [number, number] = [75.0, 20.0];
+const INDIA_ZOOM = 3.6;
 
 interface Props {
   conflicts: Conflict[];
@@ -36,11 +40,42 @@ const INTENSITY_SIZE: Record<string, number> = {
   low: 12,
 };
 
+// ─── Inject per-intensity pulse keyframes once ────────────────────────────────
+// Uses box-shadow spread (NOT transform: scale) so MapLibre's own transform
+// updates on the .maplibregl-marker wrapper never interfere with the animation.
+function ensurePulseStyles() {
+  if (document.getElementById('conflict-marker-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'conflict-marker-styles';
+  style.textContent = `
+    @keyframes pulse-critical {
+      0%   { box-shadow: 0 0 8px 2px rgba(220,38,38,0.8),  0 0 0 0   rgba(220,38,38,0.55); }
+      60%  { box-shadow: 0 0 12px 4px rgba(220,38,38,0.5), 0 0 0 18px rgba(220,38,38,0); }
+      100% { box-shadow: 0 0 8px 2px rgba(220,38,38,0.8),  0 0 0 0   rgba(220,38,38,0.55); }
+    }
+    @keyframes pulse-high {
+      0%   { box-shadow: 0 0 7px 2px rgba(239,68,68,0.7),  0 0 0 0   rgba(239,68,68,0.45); }
+      60%  { box-shadow: 0 0 10px 3px rgba(239,68,68,0.4), 0 0 0 15px rgba(239,68,68,0); }
+      100% { box-shadow: 0 0 7px 2px rgba(239,68,68,0.7),  0 0 0 0   rgba(239,68,68,0.45); }
+    }
+    @keyframes pulse-moderate {
+      0%   { box-shadow: 0 0 6px 1px rgba(248,113,113,0.6), 0 0 0 0   rgba(248,113,113,0.35); }
+      60%  { box-shadow: 0 0 8px 2px rgba(248,113,113,0.3), 0 0 0 12px rgba(248,113,113,0); }
+      100% { box-shadow: 0 0 6px 1px rgba(248,113,113,0.6), 0 0 0 0   rgba(248,113,113,0.35); }
+    }
+    @keyframes pulse-low {
+      0%   { box-shadow: 0 0 4px 1px rgba(252,165,165,0.5), 0 0 0 0   rgba(252,165,165,0.25); }
+      60%  { box-shadow: 0 0 6px 1px rgba(252,165,165,0.2), 0 0 0 10px rgba(252,165,165,0); }
+      100% { box-shadow: 0 0 4px 1px rgba(252,165,165,0.5), 0 0 0 0   rgba(252,165,165,0.25); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function buildMarkerEl(conflict: Conflict): HTMLElement {
   const color = INTENSITY_COLOR[conflict.intensity];
-  const glow = INTENSITY_GLOW[conflict.intensity];
   const size = INTENSITY_SIZE[conflict.intensity];
-  const pulseSpeed = conflict.intensity === 'critical' ? '1.2s' : conflict.intensity === 'high' ? '1.8s' : conflict.intensity === 'moderate' ? '2.5s' : '3.5s';
+  const speed = conflict.intensity === 'critical' ? '1.4s' : conflict.intensity === 'high' ? '2.0s' : conflict.intensity === 'moderate' ? '2.8s' : '3.8s';
 
   const wrap = document.createElement('div');
   wrap.style.cssText = `
@@ -55,38 +90,25 @@ function buildMarkerEl(conflict: Conflict): HTMLElement {
   wrap.setAttribute('data-conflict-id', conflict.id);
   wrap.title = conflict.title;
 
-  // Outer pulse ring
-  const ring = document.createElement('div');
-  ring.style.cssText = `
-    position: absolute;
-    width: ${size + 16}px;
-    height: ${size + 16}px;
-    border-radius: 50%;
-    background: ${glow};
-    animation: pulse-ring ${pulseSpeed} ease-out infinite;
-  `;
-
-  // Inner dot
+  // Single dot — pulse effect via box-shadow only (no transform, no scale)
+  // This prevents any interference with MapLibre's translate transform on .maplibregl-marker
   const dot = document.createElement('div');
   dot.style.cssText = `
-    position: relative;
     width: ${size}px;
     height: ${size}px;
     border-radius: 50%;
     background: ${color};
-    box-shadow: 0 0 ${size / 2}px ${glow}, 0 0 ${size}px ${glow};
-    border: 2px solid rgba(255,255,255,0.25);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    border: 2px solid rgba(255,255,255,0.3);
+    animation: pulse-${conflict.intensity} ${speed} ease-in-out infinite;
     z-index: 1;
+    flex-shrink: 0;
   `;
 
-  // Flag images via flagcdn.com (Windows-compatible, no emoji rendering issues)
+  // Flag images — flagcdn.com (works on Windows, no emoji rendering issues)
   const flagWrap = document.createElement('div');
   flagWrap.style.cssText = `
     position: absolute;
-    bottom: -16px;
+    bottom: -14px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -101,10 +123,106 @@ function buildMarkerEl(conflict: Conflict): HTMLElement {
     flagWrap.appendChild(img);
   });
 
-  wrap.appendChild(ring);
   wrap.appendChild(dot);
   wrap.appendChild(flagWrap);
   return wrap;
+}
+
+// ─── Border layers ────────────────────────────────────────────────────────────
+function addBorderLayers(map: maplibregl.Map) {
+  // India claimed boundary
+  map.addSource('india-border', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [INDIA_CLAIMED_POLYGON] },
+  });
+  map.addLayer({
+    id: 'india-border-fill',
+    type: 'fill',
+    source: 'india-border',
+    paint: { 'fill-color': '#ff3333', 'fill-opacity': 0.04 },
+  });
+  map.addLayer({
+    id: 'india-border-line',
+    type: 'line',
+    source: 'india-border',
+    paint: {
+      'line-color': '#ff3333',
+      'line-width': 1.8,
+      'line-opacity': 0.85,
+    },
+  });
+
+  // Line of Control
+  map.addSource('loc', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [LOC_LINE] },
+  });
+  map.addLayer({
+    id: 'loc-line',
+    type: 'line',
+    source: 'loc',
+    paint: {
+      'line-color': '#ff8c00',
+      'line-width': 2.2,
+      'line-opacity': 0.95,
+      'line-dasharray': [6, 3],
+    },
+  });
+
+  // LAC — both sectors
+  map.addSource('lac', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [LAC_WESTERN, LAC_EASTERN] },
+  });
+  map.addLayer({
+    id: 'lac-line',
+    type: 'line',
+    source: 'lac',
+    paint: {
+      'line-color': '#00bfff',
+      'line-width': 2.2,
+      'line-opacity': 0.9,
+      'line-dasharray': [4, 4],
+    },
+  });
+
+  // ─ Text labels for LoC and LAC ─
+  map.addLayer({
+    id: 'loc-label',
+    type: 'symbol',
+    source: 'loc',
+    layout: {
+      'text-field': 'LoC',
+      'text-size': 10,
+      'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+      'symbol-placement': 'line-center',
+      'text-offset': [0, -1.0],
+      'text-rotation-alignment': 'map',
+    },
+    paint: {
+      'text-color': '#ff8c00',
+      'text-halo-color': 'rgba(0,0,0,0.7)',
+      'text-halo-width': 1.5,
+    },
+  });
+  map.addLayer({
+    id: 'lac-label',
+    type: 'symbol',
+    source: 'lac',
+    layout: {
+      'text-field': 'LAC',
+      'text-size': 10,
+      'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+      'symbol-placement': 'line-center',
+      'text-offset': [0, -1.0],
+      'text-rotation-alignment': 'map',
+    },
+    paint: {
+      'text-color': '#00bfff',
+      'text-halo-color': 'rgba(0,0,0,0.7)',
+      'text-halo-width': 1.5,
+    },
+  });
 }
 
 export default function MapView({ conflicts, onConflictClick }: Props) {
@@ -112,13 +230,15 @@ export default function MapView({ conflicts, onConflictClick }: Props) {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
-  // Init map
+  ensurePulseStyles();
+
+  // ─ Init map ─
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
-    // Free satellite + labels style using Esri World Imagery + OSM labels via MapLibre
     const FREE_STYLE = {
       version: 8 as const,
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
       sources: {
         'esri-satellite': {
           type: 'raster' as const,
@@ -151,36 +271,10 @@ export default function MapView({ conflicts, onConflictClick }: Props) {
       attributionControl: false,
     });
 
-    map.addControl(
-      new mapboxgl.AttributionControl({ compact: true }),
-      'bottom-right'
-    );
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right');
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
 
-    map.addControl(
-      new mapboxgl.NavigationControl({ showCompass: false }),
-      'bottom-right'
-    );
-
-    // Subtle vignette overlay — India boundary highlight
-    map.on('load', () => {
-      // Add a subtle highlight layer for India
-      map.addSource('india-highlight', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              geometry: {
-                type: 'Point',
-                coordinates: [78.9629, 20.5937],
-              },
-              properties: {},
-            },
-          ],
-        },
-      });
-    });
+    map.on('load', () => addBorderLayers(map));
 
     mapRef.current = map;
     return () => {
@@ -189,13 +283,13 @@ export default function MapView({ conflicts, onConflictClick }: Props) {
     };
   }, []);
 
-  // Add / update markers when conflicts change
+  // ─ Add / update markers ─
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const addMarkers = () => {
-      // Remove stale
+      // Remove stale markers
       markersRef.current.forEach((marker, id) => {
         if (!conflicts.find((c) => c.id === id)) {
           marker.remove();
@@ -203,104 +297,81 @@ export default function MapView({ conflicts, onConflictClick }: Props) {
         }
       });
 
-      // Add new
+      // Add new markers
       conflicts.forEach((conflict) => {
         if (markersRef.current.has(conflict.id)) return;
-
         const el = buildMarkerEl(conflict);
         el.addEventListener('click', (e) => {
           e.stopPropagation();
           onConflictClick(conflict);
         });
-
         const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([conflict.lng, conflict.lat])
           .addTo(map);
-
         markersRef.current.set(conflict.id, marker);
       });
     };
 
-    if (map.isStyleLoaded()) {
-      addMarkers();
-    } else {
-      map.on('load', addMarkers);
-    }
+    if (map.isStyleLoaded()) addMarkers();
+    else map.once('load', addMarkers);
   }, [conflicts, onConflictClick]);
 
   return (
     <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 
-      {/* Map label overlay */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(5,10,20,0.75)',
-          backdropFilter: 'blur(6px)',
-          border: '1px solid rgba(220,38,38,0.3)',
-          borderRadius: 4,
-          padding: '4px 14px',
-          color: '#94a3b8',
-          fontSize: 11,
-          letterSpacing: '0.12em',
-          fontFamily: 'monospace',
-          pointerEvents: 'none',
-          whiteSpace: 'nowrap',
-        }}
-      >
+      {/* Title overlay */}
+      <div style={{
+        position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+        background: 'rgba(5,10,20,0.75)', backdropFilter: 'blur(6px)',
+        border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4,
+        padding: '4px 14px', color: '#94a3b8', fontSize: 11,
+        letterSpacing: '0.12em', fontFamily: 'monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
+      }}>
         INDIA STRATEGIC ENVIRONMENT — SATELLITE VIEW
       </div>
 
-      {/* Legend */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 48,
-          left: 12,
-          background: 'rgba(5,10,20,0.82)',
-          backdropFilter: 'blur(6px)',
-          border: '1px solid #1f3050',
-          borderRadius: 6,
-          padding: '8px 12px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 5,
-        }}
-      >
-        {(
-          [
-            ['critical', 'Critical — Direct Impact'],
-            ['high', 'High — Direct/Indirect'],
-            ['moderate', 'Moderate — Indirect'],
-            ['low', 'Low — Monitor'],
-          ] as const
+      {/* Border legend */}
+      <div style={{
+        position: 'absolute', top: 44, left: '50%', transform: 'translateX(-50%)',
+        display: 'flex', gap: 14, pointerEvents: 'none',
+      }}>
+        {[
+          { color: '#ff3333', label: 'India (claimed)', dash: 'none' },
+          { color: '#ff8c00', label: 'LoC', dash: '6px 3px' },
+          { color: '#00bfff', label: 'LAC', dash: '4px 4px' },
+        ].map(({ color, label, dash }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5,
+            background: 'rgba(5,10,20,0.7)', borderRadius: 3, padding: '2px 7px' }}>
+            <svg width="24" height="4">
+              <line x1="0" y1="2" x2="24" y2="2"
+                stroke={color} strokeWidth="2.5"
+                strokeDasharray={dash === 'none' ? undefined : dash} />
+            </svg>
+            <span style={{ color: '#cbd5e1', fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.08em' }}>
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Intensity legend */}
+      <div style={{
+        position: 'absolute', bottom: 48, left: 12,
+        background: 'rgba(5,10,20,0.82)', backdropFilter: 'blur(6px)',
+        border: '1px solid #1f3050', borderRadius: 6, padding: '8px 12px',
+        display: 'flex', flexDirection: 'column', gap: 5,
+      }}>
+        {([ ['critical','Critical — Direct Impact'], ['high','High — Direct/Indirect'],
+            ['moderate','Moderate — Indirect'], ['low','Low — Monitor'] ] as const
         ).map(([intensity, label]) => (
-          <div
-            key={intensity}
-            style={{ display: 'flex', alignItems: 'center', gap: 7 }}
-          >
-            <div
-              style={{
-                width: INTENSITY_SIZE[intensity],
-                height: INTENSITY_SIZE[intensity],
-                borderRadius: '50%',
-                background: INTENSITY_COLOR[intensity],
-                boxShadow: `0 0 6px ${INTENSITY_GLOW[intensity]}`,
-                flexShrink: 0,
-              }}
-            />
-            <span
-              style={{
-                color: '#94a3b8',
-                fontSize: 10,
-                fontFamily: 'monospace',
-                letterSpacing: '0.05em',
-              }}
-            >
+          <div key={intensity} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{
+              width: INTENSITY_SIZE[intensity], height: INTENSITY_SIZE[intensity],
+              borderRadius: '50%', background: INTENSITY_COLOR[intensity],
+              boxShadow: `0 0 6px ${INTENSITY_GLOW[intensity]}`, flexShrink: 0,
+            }} />
+            <span style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace', letterSpacing: '0.05em' }}>
               {label}
             </span>
           </div>

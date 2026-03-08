@@ -1,31 +1,65 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { RssArticle, NewsCategory } from '../types';
 
+// ─── RSS / GDELT sources ──────────────────────────────────────────────────────
 const RSS_SOURCES = [
-  { url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml',              label: 'BBC Asia',    defaultCategory: 'security'   as NewsCategory },
-  { url: 'https://www.aljazeera.com/xml/rss/all.xml',                     label: 'Al Jazeera',  defaultCategory: 'diplomatic' as NewsCategory },
-  { url: 'https://www.thehindu.com/news/international/feeder/default.rss', label: 'The Hindu',  defaultCategory: 'diplomatic' as NewsCategory },
-  { url: 'https://feeds.feedburner.com/ndtvnews-india-news',               label: 'NDTV',       defaultCategory: 'security'   as NewsCategory },
+  { url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml',               label: 'BBC Asia',    cat: 'security'   as NewsCategory },
+  { url: 'https://feeds.bbci.co.uk/news/world/middle_east/rss.xml',        label: 'BBC MidEast', cat: 'military'   as NewsCategory },
+  { url: 'https://www.aljazeera.com/xml/rss/all.xml',                      label: 'Al Jazeera',  cat: 'diplomatic' as NewsCategory },
+  { url: 'https://www.thehindu.com/news/international/feeder/default.rss', label: 'The Hindu',   cat: 'diplomatic' as NewsCategory },
+  { url: 'https://feeds.feedburner.com/ndtvnews-india-news',               label: 'NDTV',        cat: 'security'   as NewsCategory },
 ];
 
-// ─── Relevance / category classifiers ────────────────────────────────────────
-const RELEVANCE_KEYWORDS = [
-  'india', 'indian', 'pakistan', 'china', 'myanmar', 'bangladesh', 'nepal',
-  'sri lanka', 'maldives', 'kashmir', 'loc', 'lac', 'border', 'military',
-  'army', 'navy', 'airforce', 'missile', 'nuclear', 'terror', 'attack',
-  'conflict', 'tension', 'ceasefire', 'infiltration', 'insurgency',
-  'geopolitics', 'security', 'defence', 'strategic', 'ispr', 'isi',
-  'houthi', 'iran', 'gulf', 'ladakh', 'arunachal', 'manipur', 'sindoor',
-  'balakot', 'pulwama', 'quad', 'bri', 'cpec', 'pla', 'drones',
+// GDELT full-text search: geopolitical/military events around India + Middle East
+// 100% free, no API key, monitored globally from 65,000+ sources
+const GDELT_QUERIES = [
+  'india pakistan china military border conflict kashmir',
+  'india naval military iran israel houthi conflict',
+];
+
+// ─── Strict geopolitical keyword sets ────────────────────────────────────────
+
+// POSITIVE: article MUST contain at least one of these strong signals
+const STRONG_GEO_KEYWORDS = [
+  'india', 'indian', 'pakistan', 'china', 'kashmir', 'military', 'army', 'navy',
+  'airforce', 'nuclear', 'missile', 'terror', 'attack', 'conflict', 'war', 'ceasefire',
+  'border', 'loc', 'lac', 'infiltration', 'insurgency', 'houthi', 'israel', 'iran',
+  'taliban', 'myanmar', 'bangladesh', 'sri lanka', 'maldives', 'afghanistan',
+  'balakot', 'sindoor', 'pulwama', 'galwan', 'ladakh', 'arunachal',
+  'islamic state', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'ttp',
+  'pentagon', 'nato', 'quad', 'cpec', 'bri', 'pla', 'pla-n', 'ispr',
+  'sanction', 'embargo', 'strategic', 'geopolit', 'defence', 'security threat',
+  'warship', 'submarine', 'carrier', 'fighter jet', 'drone strike', 'airstrike',
+  'ceasefire', 'escalat', 'de-escalat', 'flashpoint', 'hostility', 'standoff',
+  'red sea', 'strait of hormuz', 'arabian sea', 'indian ocean', 'south china sea',
+  'gulf of oman', 'persian gulf', 'chabahar', 'hambantota',
+];
+
+// SUPPORT: secondary relevance boosters (only used to lift score, not gate)
+const SUPPORT_KEYWORDS = [
+  'diplomat', 'minister', 'bilateral', 'summit', 'treaty', 'sanction',
+  'ambassador', 'foreign policy', 'election', 'intelligence', 'surveillance',
+  'spy', 'covert', 'operation', 'classified', 'raw', 'cia', 'isi', 'mi6',
+  'refugee', 'displaced', 'humanitarian', 'casualties', 'civilian',
+  'energy', 'oil', 'gas', 'corridor', 'port', 'infrastructure',
+];
+
+// NEGATIVE: disqualify articles about these topics entirely
+const BLOCK_KEYWORDS = [
+  'cricket', 'football', 'soccer', 'tennis', 'ipl', 'championship',
+  'bollywood', 'film', 'movie', 'actor', 'celebrity', 'award',
+  'recipe', 'fashion', 'lifestyle', 'beauty', 'diet', 'fitness',
+  'stock market', 'nifty', 'sensex', 'ipo', 'startup funding',
+  'weather forecast', 'horoscope', 'astrology',
 ];
 
 const CATEGORY_KEYWORDS: Record<NewsCategory, string[]> = {
-  military:     ['army', 'military', 'navy', 'airforce', 'troops', 'soldier', 'weapon', 'missile', 'strike', 'bomb', 'drone', 'warship', 'fighter', 'artillery', 'offensive', 'defence'],
-  diplomatic:   ['talks', 'diplomat', 'minister', 'summit', 'agreement', 'treaty', 'sanction', 'ambassador', 'embassy', 'bilateral', 'multilateral', 'foreign', 'secretary', 'ministry'],
-  intelligence: ['intel', 'cia', 'raw', 'isi', 'spy', 'surveillance', 'intercept', 'covert', 'agent', 'operation', 'classified', 'signal'],
-  economic:     ['trade', 'export', 'import', 'oil', 'gas', 'economy', 'sanction', 'tariff', 'gdp', 'inflation', 'currency', 'investment', 'corridor'],
-  security:     ['terror', 'attack', 'bomb', 'security', 'police', 'arrest', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'naxal', 'insurgent', 'ceasefire', 'conflict'],
-  humanitarian: ['refugee', 'civilian', 'aid', 'crisis', 'flood', 'disaster', 'displaced', 'casualties', 'humanitarian'],
+  military:     ['army', 'military', 'navy', 'airforce', 'troops', 'soldier', 'weapon', 'missile', 'strike', 'bomb', 'drone', 'warship', 'fighter', 'artillery', 'offensive', 'defence', 'submarine', 'carrier', 'airstrike'],
+  diplomatic:   ['talks', 'diplomat', 'minister', 'summit', 'agreement', 'treaty', 'sanction', 'ambassador', 'embassy', 'bilateral', 'multilateral', 'foreign', 'secretary', 'ministry', 'negotiat'],
+  intelligence: ['intel', 'cia', 'raw', 'isi', 'spy', 'surveillance', 'intercept', 'covert', 'agent', 'operation', 'classified', 'signal', 'mi6', 'mossad'],
+  economic:     ['trade', 'export', 'import', 'oil', 'gas', 'economy', 'sanction', 'tariff', 'corridor', 'port', 'energy', 'supply chain', 'embargo'],
+  security:     ['terror', 'attack', 'security', 'police', 'arrest', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'insurgent', 'ceasefire', 'conflict', 'ttp', 'militant'],
+  humanitarian: ['refugee', 'civilian', 'aid', 'crisis', 'displaced', 'casualties', 'humanitarian', 'minority'],
 };
 
 function classifyCategory(text: string): NewsCategory {
@@ -39,53 +73,87 @@ function classifyCategory(text: string): NewsCategory {
   return best;
 }
 
-function relevanceScore(text: string): number {
-  return RELEVANCE_KEYWORDS.filter((kw) => text.toLowerCase().includes(kw)).length;
+// Returns true if the article is relevant geopolitical/national-interest content
+function isGeopoliticallyRelevant(text: string): boolean {
+  const lower = text.toLowerCase();
+  // Hard block: non-geopolitical content
+  if (BLOCK_KEYWORDS.some((kw) => lower.includes(kw))) return false;
+  // Must have at least 2 strong geopolitical keywords
+  const strongHits = STRONG_GEO_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+  return strongHits >= 2;
 }
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').trim();
 }
 
-// ─── Parse raw RSS XML string into articles ───────────────────────────────────
-function parseRssXml(xml: string, label: string, defaultCategory: NewsCategory): RssArticle[] {
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const parseErr = doc.querySelector('parsererror');
-  if (parseErr) throw new Error('XML parse error');
-
-  return Array.from(doc.querySelectorAll('item')).map((item): RssArticle => {
-    const title       = stripHtml(item.querySelector('title')?.textContent || '');
-    const link        = item.querySelector('link')?.textContent?.trim() || '';
-    const pubDate     = item.querySelector('pubDate')?.textContent || new Date().toISOString();
-    const description = stripHtml(item.querySelector('description')?.textContent || '').slice(0, 220);
-    const thumbnail   = item.querySelector('enclosure')?.getAttribute('url') ||
-                        item.querySelector('thumbnail')?.getAttribute('url') || undefined;
-    return { title, link, pubDate, description, thumbnail, source: label, sourceLabel: label, category: classifyCategory(`${title} ${description}`) || defaultCategory };
-  }).filter((a) => relevanceScore(`${a.title} ${a.description}`) >= 2);
+// ─── XML parser ───────────────────────────────────────────────────────────────
+function parseRssXml(xml: string, label: string, defaultCat: NewsCategory): RssArticle[] {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    if (doc.querySelector('parsererror')) throw new Error('XML parse error');
+    return Array.from(doc.querySelectorAll('item')).map((item): RssArticle => {
+      const title       = stripHtml(item.querySelector('title')?.textContent || '');
+      const link        = item.querySelector('link')?.textContent?.trim() || '';
+      const pubDate     = item.querySelector('pubDate')?.textContent || new Date().toISOString();
+      const description = stripHtml(item.querySelector('description')?.textContent || '').slice(0, 280);
+      const thumbnail   = item.querySelector('enclosure')?.getAttribute('url') ||
+                          item.querySelector('thumbnail')?.getAttribute('url') || undefined;
+      return { title, link, pubDate, description, thumbnail, source: label, sourceLabel: label, category: classifyCategory(`${title} ${description}`) || defaultCat };
+    }).filter((a) => isGeopoliticallyRelevant(`${a.title} ${a.description}`));
+  } catch { return []; }
 }
 
-// ─── Fetch via our own Vercel Edge proxy (/api/news) ─────────────────────────
-// Server-side fetch — zero CORS restrictions, no third-party dependencies.
-async function fetchViaProxy(rssUrl: string, label: string, cat: NewsCategory): Promise<RssArticle[]> {
-  const proxyUrl = `/api/news?url=${encodeURIComponent(rssUrl)}`;
-  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`proxy ${res.status} for ${label}`);
-  const xml = await res.text();
+// ─── GDELT parser ─────────────────────────────────────────────────────────────
+interface GdeltArticle { url: string; title: string; seendate: string; socialimage?: string; domain?: string; }
+function parseGdelt(json: string): RssArticle[] {
+  try {
+    const data: { articles?: GdeltArticle[] } = JSON.parse(json);
+    return (data.articles || []).map((a): RssArticle => ({
+      title: a.title,
+      link: a.url,
+      pubDate: a.seendate ? `${a.seendate.slice(0,4)}-${a.seendate.slice(4,6)}-${a.seendate.slice(6,8)}T${a.seendate.slice(9,11)}:${a.seendate.slice(11,13)}:00Z` : new Date().toISOString(),
+      description: '',
+      thumbnail: a.socialimage,
+      source: 'gdelt',
+      sourceLabel: 'GDELT',
+      category: classifyCategory(a.title),
+    })).filter((a) => isGeopoliticallyRelevant(a.title));
+  } catch { return []; }
+}
+
+// ─── Fetch via our Vercel Edge proxy (/api/news) ──────────────────────────────
+async function fetchViaProxy(url: string): Promise<string> {
+  const res = await fetch(`/api/news?url=${encodeURIComponent(url)}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`proxy ${res.status}`);
+  return res.text();
+}
+
+async function fetchRssSource(rssUrl: string, label: string, cat: NewsCategory): Promise<RssArticle[]> {
+  const xml = await fetchViaProxy(rssUrl);
   return parseRssXml(xml, label, cat);
 }
 
-// ─── Guardian API (native CORS support, no proxy needed) ─────────────────────
+async function fetchGdeltQuery(query: string): Promise<RssArticle[]> {
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&maxrecords=100&timespan=24h&sourcelang=english&format=json`;
+  const json = await fetchViaProxy(url);
+  return parseGdelt(json);
+}
+
+// ─── Guardian (native CORS, no proxy needed) ──────────────────────────────────
 async function fetchGuardian(apiKey: string): Promise<RssArticle[]> {
-  const q = 'india+pakistan+china+kashmir+military+border+conflict+security';
+  const q = 'india+pakistan+china+kashmir+military+border+conflict+iran+israel+houthi+terror';
   const url = `https://content.guardianapis.com/search?q=${q}&show-fields=headline,thumbnail,trailText&order-by=newest&page-size=30&api-key=${apiKey}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new Error(`guardian ${res.status}`);
-  interface GResult { webTitle: string; webUrl: string; webPublicationDate: string; fields?: { headline?: string; thumbnail?: string; trailText?: string } }
-  const data: { response: { results: GResult[] } } = await res.json();
+  interface GR { webTitle: string; webUrl: string; webPublicationDate: string; fields?: { headline?: string; thumbnail?: string; trailText?: string } }
+  const data: { response: { results: GR[] } } = await res.json();
   return data.response.results.map((r): RssArticle => {
     const title = r.fields?.headline || r.webTitle;
-    return { title, link: r.webUrl, pubDate: r.webPublicationDate, description: stripHtml(r.fields?.trailText || '').slice(0, 220), thumbnail: r.fields?.thumbnail, source: 'guardian', sourceLabel: 'The Guardian', category: classifyCategory(`${title} ${r.fields?.trailText}`) };
-  }).filter((a) => relevanceScore(`${a.title} ${a.description}`) >= 1);
+    return { title, link: r.webUrl, pubDate: r.webPublicationDate, description: stripHtml(r.fields?.trailText || '').slice(0, 280), thumbnail: r.fields?.thumbnail, source: 'guardian', sourceLabel: 'The Guardian', category: classifyCategory(`${title} ${r.fields?.trailText}`) };
+  }).filter((a) => isGeopoliticallyRelevant(`${a.title} ${a.description}`));
 }
 
 function dedup(articles: RssArticle[]): RssArticle[] {
@@ -107,7 +175,7 @@ export interface NewsFeedState {
   refresh: () => void;
 }
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 
 export function useNewsFeed(): NewsFeedState {
   const [articles, setArticles] = useState<RssArticle[]>([]);
@@ -123,7 +191,11 @@ export function useNewsFeed(): NewsFeedState {
     setError(null);
 
     const results = await Promise.allSettled([
-      ...RSS_SOURCES.map((s) => fetchViaProxy(s.url, s.label, s.defaultCategory)),
+      // RSS feeds
+      ...RSS_SOURCES.map((s) => fetchRssSource(s.url, s.label, s.cat)),
+      // GDELT — free, real-time global event intelligence, no API key
+      ...GDELT_QUERIES.map((q) => fetchGdeltQuery(q)),
+      // Guardian (optional, if API key provided)
       ...(guardianKey ? [fetchGuardian(guardianKey)] : []),
     ]);
 
@@ -139,7 +211,7 @@ export function useNewsFeed(): NewsFeedState {
     }
 
     all.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-    setArticles(dedup(all).slice(0, 80));
+    setArticles(dedup(all).slice(0, 100));
     setLastRefreshed(new Date());
     setLoading(false);
   }, [guardianKey]);

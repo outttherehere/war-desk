@@ -1,13 +1,17 @@
-// Vercel Edge Function — server-side RSS proxy, no CORS issues
+// Vercel Edge Function — server-side proxy for RSS feeds and GDELT
+// Runs server-side: zero CORS restrictions, no third-party dependencies.
 export const config = { runtime: 'edge' };
 
 const ALLOWED_DOMAINS = [
+  // RSS sources
   'bbci.co.uk',
+  'bbc.co.uk',
   'aljazeera.com',
   'thehindu.com',
   'feedburner.com',
   'ndtv.com',
-  'feeds.guardianapis.com',
+  // GDELT free API (geopolitical event monitoring)
+  'api.gdeltproject.org',
 ];
 
 export default async function handler(req: Request): Promise<Response> {
@@ -25,18 +29,23 @@ export default async function handler(req: Request): Promise<Response> {
 
   try {
     const upstream = await fetch(rssUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' },
-      signal: AbortSignal.timeout(12000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IntelBot/1.0)' },
+      signal: AbortSignal.timeout(14000),
     });
 
     if (!upstream.ok) {
       return new Response(`Upstream error: ${upstream.status}`, { status: 502 });
     }
 
-    const xml = await upstream.text();
-    return new Response(xml, {
+    const body = await upstream.text();
+    // Auto-detect JSON vs XML
+    const isJson = body.trimStart().startsWith('{') || body.trimStart().startsWith('[');
+
+    return new Response(body, {
       headers: {
-        'Content-Type': 'application/xml; charset=utf-8',
+        'Content-Type': isJson
+          ? 'application/json; charset=utf-8'
+          : 'application/xml; charset=utf-8',
         'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
         'Access-Control-Allow-Origin': '*',
       },
