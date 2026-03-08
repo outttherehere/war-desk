@@ -6,8 +6,9 @@ import type { Conflict } from '../types';
 // No API key needed — uses free Esri World Imagery + OpenStreetMap labels
 const mapboxgl = maplibregl;
 
-const INDIA_CENTER: [number, number] = [78.9629, 20.5937];
-const INDIA_ZOOM = 4.2;
+// Shifted south + slightly west to fit all zones including Indian Ocean, Red Sea
+const INDIA_CENTER: [number, number] = [72.0, 18.0];
+const INDIA_ZOOM = 3.8;
 
 interface Props {
   conflicts: Conflict[];
@@ -81,22 +82,23 @@ function buildMarkerEl(conflict: Conflict): HTMLElement {
     z-index: 1;
   `;
 
-  // Flag icons (up to 2)
+  // Flag images via flagcdn.com (Windows-compatible, no emoji rendering issues)
   const flagWrap = document.createElement('div');
   flagWrap.style.cssText = `
     position: absolute;
-    bottom: -18px;
+    bottom: -16px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 1px;
+    gap: 2px;
     pointer-events: none;
   `;
   conflict.countries.slice(0, 2).forEach((c) => {
-    const f = document.createElement('span');
-    f.textContent = c.flag;
-    f.style.cssText = `font-size: 11px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));`;
-    flagWrap.appendChild(f);
+    const img = document.createElement('img');
+    img.src = `https://flagcdn.com/16x12/${c.code.toLowerCase()}.png`;
+    img.alt = c.name;
+    img.style.cssText = `width:16px;height:12px;border-radius:1px;box-shadow:0 1px 3px rgba(0,0,0,0.8);`;
+    flagWrap.appendChild(img);
   });
 
   wrap.appendChild(ring);

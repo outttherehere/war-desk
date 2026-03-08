@@ -213,7 +213,11 @@ export default function ConflictPanel({ conflict, onClose }: Props) {
                 }}
                 title={c.name}
               >
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{c.flag}</span>
+                <img
+                  src={`https://flagcdn.com/32x24/${c.code.toLowerCase()}.png`}
+                  alt={c.name}
+                  style={{ width: 32, height: 24, borderRadius: 2, boxShadow: '0 1px 4px rgba(0,0,0,0.6)' }}
+                />
                 <span style={{ color: '#64748b', fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.05em' }}>
                   {c.code}
                 </span>
