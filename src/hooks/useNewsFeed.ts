@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { RssArticle, NewsCategory } from '../types';
 
 const RSS_SOURCES = [
-  { url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml',       label: 'BBC Asia',    defaultCategory: 'security'   as NewsCategory },
-  { url: 'https://www.aljazeera.com/xml/rss/all.xml',              label: 'Al Jazeera',  defaultCategory: 'diplomatic' as NewsCategory },
-  { url: 'https://www.thehindu.com/news/international/feeder/default.rss', label: 'The Hindu', defaultCategory: 'diplomatic' as NewsCategory },
-  { url: 'https://feeds.feedburner.com/ndtvnews-india-news',       label: 'NDTV',        defaultCategory: 'security'   as NewsCategory },
+  { url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml',              label: 'BBC Asia',    defaultCategory: 'security'   as NewsCategory },
+  { url: 'https://www.aljazeera.com/xml/rss/all.xml',                     label: 'Al Jazeera',  defaultCategory: 'diplomatic' as NewsCategory },
+  { url: 'https://www.thehindu.com/news/international/feeder/default.rss', label: 'The Hindu',  defaultCategory: 'diplomatic' as NewsCategory },
+  { url: 'https://feeds.feedburner.com/ndtvnews-india-news',               label: 'NDTV',       defaultCategory: 'security'   as NewsCategory },
 ];
 
 // ─── Relevance / category classifiers ────────────────────────────────────────
@@ -20,12 +20,12 @@ const RELEVANCE_KEYWORDS = [
 ];
 
 const CATEGORY_KEYWORDS: Record<NewsCategory, string[]> = {
-  military:      ['army', 'military', 'navy', 'airforce', 'troops', 'soldier', 'weapon', 'missile', 'strike', 'bomb', 'drone', 'warship', 'fighter', 'artillery', 'offensive', 'defence'],
-  diplomatic:    ['talks', 'diplomat', 'minister', 'summit', 'agreement', 'treaty', 'sanction', 'ambassador', 'embassy', 'bilateral', 'multilateral', 'foreign', 'secretary', 'ministry'],
-  intelligence:  ['intel', 'cia', 'raw', 'isi', 'spy', 'surveillance', 'intercept', 'covert', 'agent', 'operation', 'classified', 'signal'],
-  economic:      ['trade', 'export', 'import', 'oil', 'gas', 'economy', 'sanction', 'tariff', 'gdp', 'inflation', 'currency', 'investment', 'corridor'],
-  security:      ['terror', 'attack', 'bomb', 'security', 'police', 'arrest', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'naxal', 'insurgent', 'ceasefire', 'conflict'],
-  humanitarian:  ['refugee', 'civilian', 'aid', 'crisis', 'flood', 'disaster', 'displaced', 'casualties', 'humanitarian'],
+  military:     ['army', 'military', 'navy', 'airforce', 'troops', 'soldier', 'weapon', 'missile', 'strike', 'bomb', 'drone', 'warship', 'fighter', 'artillery', 'offensive', 'defence'],
+  diplomatic:   ['talks', 'diplomat', 'minister', 'summit', 'agreement', 'treaty', 'sanction', 'ambassador', 'embassy', 'bilateral', 'multilateral', 'foreign', 'secretary', 'ministry'],
+  intelligence: ['intel', 'cia', 'raw', 'isi', 'spy', 'surveillance', 'intercept', 'covert', 'agent', 'operation', 'classified', 'signal'],
+  economic:     ['trade', 'export', 'import', 'oil', 'gas', 'economy', 'sanction', 'tariff', 'gdp', 'inflation', 'currency', 'investment', 'corridor'],
+  security:     ['terror', 'attack', 'bomb', 'security', 'police', 'arrest', 'isis', 'al-qaeda', 'lashkar', 'jaish', 'naxal', 'insurgent', 'ceasefire', 'conflict'],
+  humanitarian: ['refugee', 'civilian', 'aid', 'crisis', 'flood', 'disaster', 'displaced', 'casualties', 'humanitarian'],
 };
 
 function classifyCategory(text: string): NewsCategory {
@@ -40,100 +40,45 @@ function classifyCategory(text: string): NewsCategory {
 }
 
 function relevanceScore(text: string): number {
-  const lower = text.toLowerCase();
-  return RELEVANCE_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+  return RELEVANCE_KEYWORDS.filter((kw) => text.toLowerCase().includes(kw)).length;
 }
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').trim();
 }
 
-// ─── XML parser (used when fetching raw RSS) ──────────────────────────────────
-function parseRssXml(xmlStr: string, label: string, defaultCategory: NewsCategory): RssArticle[] {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xmlStr, 'text/xml');
-    const items = Array.from(doc.querySelectorAll('item'));
-    return items.map((item): RssArticle => {
-      const title       = stripHtml(item.querySelector('title')?.textContent || '');
-      const link        = item.querySelector('link')?.textContent?.trim() || '';
-      const pubDate     = item.querySelector('pubDate')?.textContent || new Date().toISOString();
-      const description = stripHtml(item.querySelector('description')?.textContent || '').slice(0, 220);
-      const thumbnail   = item.querySelector('enclosure')?.getAttribute('url') ||
-                          item.querySelector('thumbnail')?.getAttribute('url') || undefined;
-      return { title, link, pubDate, description, thumbnail, source: label, sourceLabel: label, category: classifyCategory(`${title} ${description}`) || defaultCategory };
-    }).filter((a) => relevanceScore(`${a.title} ${a.description}`) >= 2);
-  } catch {
-    return [];
-  }
+// ─── Parse raw RSS XML string into articles ───────────────────────────────────
+function parseRssXml(xml: string, label: string, defaultCategory: NewsCategory): RssArticle[] {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const parseErr = doc.querySelector('parsererror');
+  if (parseErr) throw new Error('XML parse error');
+
+  return Array.from(doc.querySelectorAll('item')).map((item): RssArticle => {
+    const title       = stripHtml(item.querySelector('title')?.textContent || '');
+    const link        = item.querySelector('link')?.textContent?.trim() || '';
+    const pubDate     = item.querySelector('pubDate')?.textContent || new Date().toISOString();
+    const description = stripHtml(item.querySelector('description')?.textContent || '').slice(0, 220);
+    const thumbnail   = item.querySelector('enclosure')?.getAttribute('url') ||
+                        item.querySelector('thumbnail')?.getAttribute('url') || undefined;
+    return { title, link, pubDate, description, thumbnail, source: label, sourceLabel: label, category: classifyCategory(`${title} ${description}`) || defaultCategory };
+  }).filter((a) => relevanceScore(`${a.title} ${a.description}`) >= 2);
 }
 
-// ─── Strategy 1: allorigins.win (free, no key, no CORS) ──────────────────────
-async function fetchViaAllOrigins(rssUrl: string, label: string, cat: NewsCategory): Promise<RssArticle[]> {
-  const url = `https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`allorigins ${res.status}`);
-  const data: { contents: string; status: { http_code: number } } = await res.json();
-  if (data.status.http_code !== 200) throw new Error(`upstream ${data.status.http_code}`);
-  return parseRssXml(data.contents, label, cat);
-}
-
-// ─── Strategy 2: corsproxy.io fallback ───────────────────────────────────────
-async function fetchViaCorsproxy(rssUrl: string, label: string, cat: NewsCategory): Promise<RssArticle[]> {
-  const url = `https://corsproxy.io/?${encodeURIComponent(rssUrl)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`corsproxy ${res.status}`);
+// ─── Fetch via our own Vercel Edge proxy (/api/news) ─────────────────────────
+// Server-side fetch — zero CORS restrictions, no third-party dependencies.
+async function fetchViaProxy(rssUrl: string, label: string, cat: NewsCategory): Promise<RssArticle[]> {
+  const proxyUrl = `/api/news?url=${encodeURIComponent(rssUrl)}`;
+  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`proxy ${res.status} for ${label}`);
   const xml = await res.text();
   return parseRssXml(xml, label, cat);
 }
 
-// ─── Strategy 3: rss2json (needs API key for production) ─────────────────────
-interface Rss2JsonItem {
-  title: string; link: string; pubDate: string; description: string;
-  thumbnail?: string; enclosure?: { link?: string };
-}
-async function fetchViaRss2Json(rssUrl: string, label: string, cat: NewsCategory, apiKey?: string): Promise<RssArticle[]> {
-  const key = apiKey ? `&api_key=${apiKey}` : '';
-  const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=30${key}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`rss2json ${res.status}`);
-  const data: { status: string; items: Rss2JsonItem[] } = await res.json();
-  if (data.status !== 'ok') throw new Error('rss2json status error');
-  return data.items.map((item): RssArticle => ({
-    title: stripHtml(item.title),
-    link: item.link,
-    pubDate: item.pubDate,
-    description: stripHtml(item.description || '').slice(0, 220),
-    thumbnail: item.thumbnail || item.enclosure?.link,
-    source: rssUrl,
-    sourceLabel: label,
-    category: classifyCategory(`${item.title} ${item.description}`),
-  })).filter((a) => relevanceScore(`${a.title} ${a.description}`) >= 2);
-}
-
-// ─── Fetch one source — try strategies in order ───────────────────────────────
-async function fetchSource(rssUrl: string, label: string, cat: NewsCategory, rss2jsonKey?: string): Promise<RssArticle[]> {
-  const strategies = [
-    () => fetchViaAllOrigins(rssUrl, label, cat),
-    () => fetchViaCorsproxy(rssUrl, label, cat),
-    () => fetchViaRss2Json(rssUrl, label, cat, rss2jsonKey),
-  ];
-  for (const strategy of strategies) {
-    try {
-      const articles = await strategy();
-      if (articles.length > 0) return articles;
-    } catch {
-      // try next strategy
-    }
-  }
-  return [];
-}
-
-// ─── Guardian API (optional, native CORS support) ─────────────────────────────
+// ─── Guardian API (native CORS support, no proxy needed) ─────────────────────
 async function fetchGuardian(apiKey: string): Promise<RssArticle[]> {
   const q = 'india+pakistan+china+kashmir+military+border+conflict+security';
   const url = `https://content.guardianapis.com/search?q=${q}&show-fields=headline,thumbnail,trailText&order-by=newest&page-size=30&api-key=${apiKey}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new Error(`guardian ${res.status}`);
   interface GResult { webTitle: string; webUrl: string; webPublicationDate: string; fields?: { headline?: string; thumbnail?: string; trailText?: string } }
   const data: { response: { results: GResult[] } } = await res.json();
@@ -166,20 +111,19 @@ const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 export function useNewsFeed(): NewsFeedState {
   const [articles, setArticles] = useState<RssArticle[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const guardianKey  = import.meta.env.VITE_GUARDIAN_API_KEY;
-  const rss2jsonKey  = import.meta.env.VITE_RSS2JSON_KEY;
+  const guardianKey = import.meta.env.VITE_GUARDIAN_API_KEY;
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     const results = await Promise.allSettled([
-      ...RSS_SOURCES.map((s) => fetchSource(s.url, s.label, s.defaultCategory, rss2jsonKey)),
+      ...RSS_SOURCES.map((s) => fetchViaProxy(s.url, s.label, s.defaultCategory)),
       ...(guardianKey ? [fetchGuardian(guardianKey)] : []),
     ]);
 
@@ -198,7 +142,7 @@ export function useNewsFeed(): NewsFeedState {
     setArticles(dedup(all).slice(0, 80));
     setLastRefreshed(new Date());
     setLoading(false);
-  }, [guardianKey, rss2jsonKey]);
+  }, [guardianKey]);
 
   useEffect(() => {
     fetchAll();
